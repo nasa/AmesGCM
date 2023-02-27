@@ -1,0 +1,1372 @@
+diff --git a/astronomy/astronomy.F90 b/astronomy/astronomy.F90
+index e8366c37..c94f8cd3 100644
+--- a/astronomy/astronomy.F90
++++ b/astronomy/astronomy.F90
+@@ -33,6 +33,8 @@
+ module astronomy_mod
+ 
+ 
++use constants_mod, only: PI, RADIAN, seconds_per_day
++use diag_manager_mod, only: register_diag_field, send_data
+ use fms_mod,           only: fms_init, &
+                              mpp_pe, mpp_root_pe, stdlog, &
+                              write_version_number, &
+@@ -69,6 +71,10 @@ public       &
+               diurnal_solar, daily_mean_solar, annual_mean_solar,  &
+               astronomy_end, universal_time, orbital_time
+ 
++public ::  mars_calender, sol88, zenith, solar_constant
++
++
++
+ !> @}
+ 
+ !> @brief Calculates solar information for the given location(lat & lon) and time
+@@ -349,6 +355,27 @@ namelist /astronomy_nml/ ecc, obliq, per, period, &
+                          year_ae, month_ae,  day_ae,         &
+                          hour_ae, minute_ae, second_ae, &
+                          num_angles
++#ifdef MARS_GCM
++!-------------------- namelist -----------------------------------------
++
++real :: obliquity= 25.19            ! planet obliquity
++real :: eccentricity= 0.093         ! planet eccentricity
++real :: equinox_fraction= 0.269461  ! yields equinox at day 180
++real :: days_in_year= 668.0         ! days in the year
++real :: solar_constant= 589.0       ! solar constant at semimajor axis [W/m**2]
++real :: zero_date= 488.0            !day of perihelion. 488 corresponds to ls0 at day 0
++real, public :: SEMI_MAJOR_AXIS = 1.524         !   semi-major axis of orbit [AU]
++
++namelist /orbital_data_nml/ obliquity, eccentricity, equinox_fraction, &
++                            days_in_year, solar_constant, zero_date, SEMI_MAJOR_AXIS
++
++
++real, parameter   :: missing_value = -1.e10
++character(len=16), parameter :: model='astronomy'
++
++integer :: id_areo_lat
++character(len=128) :: tagname='$Name: mars_feb2012_rjw $'
++#endif
+ 
+ !--------------------------------------------------------------------
+ !------   public data ----------
+@@ -427,6 +454,7 @@ integer :: unit, ierr, io, seconds, days, jd, id
+       call time_manager_init
+       call constants_init
+ 
++#ifndef MARS_GCM
+ !-----------------------------------------------------------------------
+ !>    Read namelist.
+ !-----------------------------------------------------------------------
+@@ -499,6 +527,22 @@ integer :: unit, ierr, io, seconds, days, jd, id
+         total_pts = jd*id
+       endif
+ 
++
++#else
++!-----------------------------------------------------------------------
++!>    Read namelist.
++!-----------------------------------------------------------------------
++      read (input_nml_file, orbital_data_nml, iostat=io)
++      ierr = check_nml_error(io,'orbital_data_nml')
++!---------------------------------------------------------------------
++!>    Write version number and namelist to logfile.
++!---------------------------------------------------------------------
++      call write_version_number("ASTRONOMY_MOD", version)
++      if (mpp_pe() == mpp_root_pe() ) then
++        unit = stdlog()
++        write (unit, nml=orbital_data_nml)
++      endif
++#endif
+ !---------------------------------------------------------------------
+ !>    Mark the module as initialized.
+ !---------------------------------------------------------------------
+@@ -2242,6 +2286,353 @@ real                        :: t
+ 
+ end function universal_time
+ 
++#ifdef MARS_GCM
++subroutine mars_calender( jld, fjd, r_orbit, dlt, areo )
++!
++!     mars_calender computes radius vector, declination and areocentric longitude
++!        given the integer day and day fraction.
++
++integer, intent(in)  :: jld       ! julian day
++real,    intent(in)  :: fjd       ! fraction of julian day
++real,    intent(out) :: r_orbit   ! radius vector (distance to sun in a. u.)
++real,    intent(out) :: dlt       ! declination of sun
++real,    intent(out) :: areo      ! Areocentric longitude
++
++!     All angles are expressed in radians
++
++!  Local
++real :: slag         !  apparent sun lag alng
++real :: alp          !  right ascension of sun
++
++real :: date, angin, sni, sind, deleqn, tini, areonew
++real :: qq, e, ec, ep, er, em, eq, w, year, tst
++
++!real :: zero_date= 0.0           !  time of perihelion passage
++real :: small_value= 1.0e-7
++real :: mod_date = 0.
++
++if(  obliquity > 0 ) then
++
++!         date=days since last perihelion passage
++    date = jld + fjd - zero_date
++
++!    Specify orbit eccentricity and angle of planets's inclination
++
++    angin = obliquity
++    ec=     eccentricity
++    sni = sin( angin/Radian )
++
++    deleqn = equinox_fraction * days_in_year
++    year = days_in_year
++
++    tini = 1.0/tan(angin/Radian)
++    er = sqrt( (1.0 + ec)/(1.0 - ec) )
++
++    qq = 2.0 * pi * deleqn / year   !  qq is the mean anomaly
++
++!           determine true anomaly at equinox:  eq
++    e = 1.0
++    tst = 2*small_value
++    do while (tst .gt. small_value)
++        ep = e - (e-ec*sin(e)-qq) / (1.0-ec*cos(e))
++        tst = abs(e-ep)
++        e = ep
++    enddo
++    eq = 2. * atan( er * tan(0.5*e) )
++
++
++!           determine true anomaly at current date:  w
++    em = 2.0 * pi * date / year
++    e = 1.0
++    tst = 2*small_value
++    do while (tst .gt. small_value)
++        ep = e -(e - ec * sin(e) - em) / (1.0 - ec * cos(e))
++        tst = abs(e-ep)
++        e = ep
++    enddo
++    w = 2.0 * atan( er * tan(0.5*e) )
++
++
++!      Radius vector ( astronomical units:  AU )
++    areo= w - eq            !Aerocentric Longitude
++    r_orbit = 1.0 - ec * cos(e)
++
++!         Declination: dlt
++!     sni= sine of angle of inclination of planet's orbit
++    sind = sni * sin(w-eq)
++    dlt = asin(sind)
++
++!         Right ascension
++!      Note that righ ascension (alp) is only used for slag
++!      alp = asin( tan(dlt) * tini )
++!      tst = cos(w - eq)
++!      if(tst .lt. 0.0) alp = pi - alp
++!      if(alp .lt. 0.) alp = alp + 2.0 * pi
++!             set slat to 0.0
++!      sun = 2.0 * pi * (date - deleqn) / year
++!      if(sun .lt. 0.0) sun = sun + 2.0 * pi
++!      slag = sun - alp - .03255
++
++    slag= 0.0
++    alp= 0.0
++
++else    !  Specify simple geometry: Constant orbital radius; No planetary tilt
++
++    dlt= 0.0
++    r_orbit= 1.0
++    slag= 0.0
++    alp= 0.0
++    areo= 0.0
++
++endif
++
++if( areo < 0.0 )  areo = areo + 2.0*pi
++
++mod_date=dble(modulo((zero_date+anint(deleqn)),days_in_year))
++if (mod_date == 0.) mod_date = days_in_year
++if (floor((dble(jld)+fjd)/mod_date)>0) then
++    year = 1.
++    areo = areo + (year+ &
++        dble(floor( &
++        (dble(jld)+fjd-mod_date) &
++        /days_in_year)))*2.0*pi
++endif
++
++return
++end subroutine mars_calender
++
++!=======================================================================
++!=======================================================================
++
++subroutine sol88( dlt, alat, hang, cosz, frac )
++!
++!     sol88 computes the hour angle of sun at sunset, the mean
++!      cosine of the suns zenith angle and daylight fraction for n
++!      specified latitudes given the declination
++!
++!      dlt  =         declination of sun
++!      cosz =         mean cosine zenith angle(do not divide by r**2).
++!      hang  =        hour angle
++!      frac  =        fraction of daylight
++!
++!     note - all angles are expressed in radians
++
++
++real, intent(in)                   ::  dlt    ! declination of sun
++real, intent(in),   dimension(:,:) :: alat
++real, intent(out),  dimension(:,:) :: hang    !  hour angle
++real, intent(out),  dimension(:,:) :: cosz    ! mean cosine zenith angle
++real, intent(out),  dimension(:,:) :: frac    ! fraction of daylight
++
++real  ::  eps, ph, h, ss, cc, ap, ar, ac
++real  ::  small_value= 1.0e-7
++integer  ::  i, j,  id, jd
++
++!   -------- compute hour angle of sunset at all latitudes------
++
++id = size( cosz,1)
++jd = size( cosz,2)
++
++do i=1,id
++    do j=1,jd
++
++        ph = alat(i,j)
++        ap = abs(ph)
++        eps = abs(ap - 0.5 * pi)
++
++        if(dlt == 0.0) then
++
++            h = 0.5 * pi
++            ss = 0.0
++            cc= cos(ph)
++
++        else if(eps .gt. small_value) then
++
++            ss = sin(ph) * sin(dlt)
++            cc = cos(ph) * cos(dlt)
++            ar = - ss / cc
++            ac = abs(ar)
++            if((ac - 1. + small_value) .lt. 0.0) then
++                h = acos(ar)
++            else if((ac - 1. + small_value) .eq. 0.0) then
++                h = (ac - ar) * 0.5 * pi
++            else
++                if(ar .lt. 0.) then
++                    h = pi
++                else
++                    h = 0.0
++                endif
++            endif
++
++        else
++! Hour angle of sunset at poles is either 0 or pi, depending on declination
++            h = 0.5 * pi * abs(ap / ph + abs(dlt) / dlt)
++            ss = sin(ph) * sin(dlt)
++            cc = 0.0
++
++        endif
++
++        hang(i,j) = h
++
++!       Integrating from -h to  h yields the average zenith angle
++!                Zenith angle averaged over daylight hours
++        if( h .eq. 0.0 ) then
++            cosz(i,j) = 0.0
++        else
++            cosz(i,j) = max( ss + cc*sin(h)/h, 0.0 )
++        endif
++
++    enddo
++enddo
++
++frac(:,:)= hang(:,:) / pi
++
++return
++end subroutine sol88
++
++
++!=======================================================================
++!=======================================================================
++
++subroutine zenith( fjd, dlt, slag, xlon, xlat, hang, dhr, cosz, frac )
++!
++!   zenith computes effective mean cosine of zenith angle and daylight
++!   fraction from latitude and parameters given by subroutine solar
++!   by means of the following equation -
++!
++!     cosz = sin(xlat)*sin(dlt) + cos(xlat)*cos(dlt)*sin(arg)/arg
++!
++!     fjd   = day fraction beyond integral julian day(begins at noon ut)
++!     dlt   = declination of sun
++!     slag  = lag in ra of apparent sun behind mean sun
++!     ha    = hour angle of sun at sunset
++!     dhr   = half the integration (or averaging) period in radians
++!     cosz  = mean cosine of zenith angle for all longitudes
++!     frac  = daylight fraction at all longitudes
++!     gha   = hour angle of sun at greenwich (west of meridian is plus)
++!     arg   = half of integration period in radians
++!     hloc  = hour angle of sun plus arg at longitude xlng
++!     delsh = truncated averaging period resulting from late sunrise or
++!               early sunset (dele and delw are similarly truncated)
++!
++!     note - all angles are expressed in radians
++
++real, intent(in)                  :: fjd     ! day fraction
++real, intent(in)                  :: dlt     ! declination of sun
++real, intent(in),  dimension(:,:) :: xlon
++real, intent(in),  dimension(:,:) :: xlat
++real, intent(in)                  :: slag    ! lag in ra of apparent sun behind mean sun
++real, intent(in),  dimension(:,:) :: hang    ! hour angle of sun at sunset
++real, intent(in)                  :: dhr     ! 1/2 the integration (or averaging) period in radians
++real, intent(out), dimension(:,:) :: cosz    ! mean cosine zenith angle
++real, intent(out), dimension(:,:) :: frac    ! fraction of daylight
++
++!  Local
++logical :: rise, set
++
++real :: tpi, gha, arg, sinfac, ha, ss, cc, cons
++real :: xlng, hloc, hlpar, armhl, dele, delw, delsh
++integer :: id, jd, i, j
++
++tpi= 2.0*pi
++
++id = size(cosz, 1)
++jd=  size(cosz, 2)
++
++gha = fjd * 2.0*pi + slag
++arg= dhr
++sinfac = sin(arg)/arg
++
++do i=1,id
++    do j=1,jd
++
++        xlng= xlon(i,j)
++        ha= hang(i,j)
++        ss = sin(xlat(i,j)) * sin(dlt)
++        cc = cos(xlat(i,j)) * cos(dlt)
++        if (ha .gt. 0.0) cons = ss + cc*sin(ha)/ha
++        hloc = gha + xlng + pi
++        rise = .false.
++        set  = .false.
++
++!  reset hloc to within plus and minus pi
++        hloc = mod(hloc,tpi)
++        if (hloc .gt. pi) hloc = hloc - tpi
++
++!  determine if sun rises or sets during averaging period
++
++        hlpar = hloc + arg
++        armhl = arg - hloc
++        if (hlpar .gt. ha) set  = .true.
++        if (armhl .gt. ha) rise = .true.
++
++        if (rise .and. set) then
++            if (ha .le. 0.0) then
++                cosz(i,j) = 0.0
++                frac(i,j) = 0.0
++            else
++!  averaging period covers the entire duration of daylight
++                cosz(i,j) = cons
++                frac(i,j) = ha / arg
++            endif
++        else
++            if (hlpar .gt. pi) then
++                dele = 0.5 * max(hlpar + ha - tpi, 0.0)
++                delw = 0.5 * max(ha + armhl, 0.0)
++            elseif (armhl .gt. pi) then
++                dele = 0.5 * max(ha + hlpar, 0.0)
++                delw = 0.5 * max(armhl + ha - tpi, 0.0)
++            endif
++
++            if (hlpar.gt.pi .or. armhl.gt.pi) then
++!  averaging interrupted by both sunset and sunrise - done in 2 parts
++                frac(i,j) = (dele + delw) / arg
++                if (frac(i,j) .eq. 0.0) then
++                    cosz(i,j) = 0.0
++                else
++                    cosz(i,j) = ss + cc*(cos(ha - dele)*sin(dele)         &
++                        + cos(ha - delw) * sin(delw))/(dele + delw)
++                endif
++            endif
++        endif
++
++        if (.not.(rise.and.set) .and. (hlpar.le.pi)                    &
++                                .and. (armhl.le.pi)) then
++            if (set) delsh = 0.5 * (ha + armhl)
++            if (rise) delsh = 0.5 * (ha + hlpar)
++
++!   either a sunrise or sunset occurs during the averaging period
++
++            if (rise .or. set) then
++                if (delsh .le. 0.0) then
++                    cosz(i,j) = 0.0
++                    frac(i,j) = 0.0
++                else
++                    cosz(i,j) = ss + cc*cos(ha -delsh)*sin(delsh)/delsh
++                    frac(i,j) = delsh / arg
++                endif
++
++            else !  normal case where sun is up during entire averaging period
++                cosz(i,j) = ss + cc * cos(hloc) * sinfac
++                frac(i,j) = 1.0
++            endif
++        endif
++
++!  limit cosz and fraction to within range of zero to one
++        cosz(i,j) = min( 1.0, cosz(i,j) )
++        cosz(i,j) = max( 0.0, cosz(i,j) )
++        frac(i,j) = min( 1.0, frac(i,j) )
++
++    enddo
++enddo
++
++return
++end subroutine zenith
++
++#endif
++!=======================================================================
++!=======================================================================
++
+ end module astronomy_mod
+ !> @}
+ ! close documentation grouping
+diff --git a/constants/constants.F90 b/constants/constants.F90
+index 008321a6..dc5a9b83 100644
+--- a/constants/constants.F90
++++ b/constants/constants.F90
+@@ -99,22 +99,39 @@ real,               public, parameter :: TFREEZE = 273.15_r8_kind     !< Freezin
+ 
+ #else
+ 
++
++#ifndef MARS_GCM
+ real,         public, parameter :: RADIUS = 6371.0e+3_r8_kind * small_fac   !< Radius of the Earth [m]
+-real(kind=8), public, parameter :: PI_8   = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
+-real,         public, parameter :: PI     = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
+ real,         public, parameter :: OMEGA  = 7.292e-5_r8_kind / small_fac    !< Rotation rate of the Earth [1/s]
+ real,         public, parameter :: GRAV   = 9.80_r8_kind             !< Acceleration due to gravity [m/s^2]
+ real,         public, parameter :: RDGAS  = 287.04_r8_kind           !< Gas constant for dry air [J/kg/deg]
++real,         public, parameter :: KAPPA  = 2.0_r8_kind/7.0_r8_kind  !< RDGAS / CP_AIR [dimensionless]
++real,         public, parameter :: CP_AIR = RDGAS/KAPPA              !< Specific heat capacity of dry air at constant pressure [J/kg/deg]
++#else
++!rjw  real, public, parameter :: RADIUS = 3386.0e3
++!rjw  real, public, parameter :: OMEGA  = 7.0882e-5
++real, public, parameter :: GRAV   = 3.72_r8_kind
++!real, public, parameter :: RDGAS  = 191.00
++!real, public, parameter :: CP_AIR = 744.5 !737.0
++real, public, parameter :: RDGAS  = 189.02_r8_kind
++real, public, parameter :: CP_AIR = 735.94_r8_kind
++real, public, parameter :: KAPPA  = RDGAS/CP_AIR
++real, public, parameter :: RADIUS = 3386.0e3_r8_kind * small_fac
++real, public, parameter :: OMEGA  = 7.0882e-5_r8_kind / small_fac
++
++
++#endif
++real(kind=8), public, parameter :: PI_8   = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
++real,         public, parameter :: PI     = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
+ real,         public, parameter :: RVGAS  = 461.50_r8_kind           !< Gas constant for water vapor [J/kg/deg]
+ ! Extra:
+ real,         public, parameter :: HLV = 2.500e6_r8_kind             !< Latent heat of evaporation [J/kg]
+ real,         public, parameter :: HLF = 3.34e5_r8_kind              !< Latent heat of fusion [J/kg]
+-real,         public, parameter :: KAPPA  = 2.0_r8_kind/7.0_r8_kind  !< RDGAS / CP_AIR [dimensionless]
+-real,         public, parameter :: CP_AIR = RDGAS/KAPPA              !< Specific heat capacity of dry air at constant pressure [J/kg/deg]
+ real,         public, parameter :: TFREEZE = 273.16_r8_kind          !< Freezing temperature of fresh water [K]
+ #endif
+ 
+-real, public, parameter :: STEFAN  = 5.6734e-8_r8_kind !< Stefan-Boltzmann constant [W/m^2/deg^4]
++real, public, parameter :: KBOLTZ = 1.38064852e-23 ! m^2 kg s^-2 K^-1 Boltzmann Constant
++real, public, parameter :: STEFAN  = 5.6703744e-8_r8_kind !< Stefan-Boltzmann constant [W/m^2/deg^4]
+ 
+ real, public, parameter :: CP_VAPOR = 4.0_r8_kind*RVGAS      !< Specific heat capacity of water vapor at constant pressure [J/kg/deg]
+ real, public, parameter :: CP_OCEAN = 3989.24495292815_r8_kind !< Specific heat capacity taken from McDougall (2002)
+@@ -128,7 +145,11 @@ real, public, parameter :: ES0 = 1.0_r8_kind        !< Humidity factor. Controls
+ real, public, parameter :: DENS_H2O = 1000._r8_kind !< Density of liquid water [kg/m^3]
+ real, public, parameter :: HLS = HLV + HLF          !< Latent heat of sublimation [J/kg]
+ 
++#ifdef MARS_GCM
++real, public, parameter :: WTMAIR = 4.349E+01_r8_kind
++#else
+ real, public, parameter :: WTMAIR   = 2.896440E+01_r8_kind   !< Molecular weight of air [AMU]
++#endif MARS_GCM
+ real, public, parameter :: WTMH2O   = WTMAIR*(RDGAS/RVGAS)   !< Molecular weight of water [AMU]
+ real, public, parameter :: WTMOZONE =  47.99820_r8_kind      !< Molecular weight of ozone [AMU]
+ real, public, parameter :: WTMC     =  12.00000_r8_kind      !< Molecular weight of carbon [AMU]
+@@ -140,12 +161,27 @@ real, public, parameter :: WTMCFC12 = 120.9135_r8_kind       !< Molecular weight
+ real, public, parameter :: WTMN     =  14.0067_r8_kind       !< Molecular weight of Nitrogen [AMU]
+ real, public, parameter :: DIFFAC   = 1.660000E+00_r8_kind   !< Diffusivity factor [dimensionless]
+ real, public, parameter :: AVOGNO   = 6.023000E+23_r8_kind   !< Avogadro's number [atoms/mole]
++#ifndef MARS_GCM
+ real, public, parameter :: PSTD     = 1.013250E+06_r8_kind   !< Mean sea level pressure [dynes/cm^2]
+ real, public, parameter :: PSTD_MKS = 101325.0_r8_kind       !< Mean sea level pressure [N/m^2]
++#endif
+ 
++#ifdef MARS_GCM
++#ifdef SECDAY86400
++real, public, parameter :: SECONDS_PER_DAY    = 8.640000E+04_r8_kind !< Seconds in a day [s]
++real, public, parameter :: SECONDS_PER_HOUR   = 3600._r8_kind        !< Seconds in an hour [s]
++real, public, parameter :: SECONDS_PER_MINUTE = 60._r8_kind          !< Seconds in a minute [s]
++#else
++real, public, parameter :: SECONDS_PER_DAY    = 8.870400E+04_r8_kind !< Seconds in a day [s]
++real, public, parameter :: SECONDS_PER_HOUR   = 3696._r8_kind        !< Seconds in an hour [s]
++real, public, parameter :: SECONDS_PER_MINUTE = 61.6_r8_kind          !< Seconds in a minute [s]
++#endif SECDAY86400
++
++#else
+ real, public, parameter :: SECONDS_PER_DAY    = 8.640000E+04_r8_kind !< Seconds in a day [s]
+ real, public, parameter :: SECONDS_PER_HOUR   = 3600._r8_kind        !< Seconds in an hour [s]
+ real, public, parameter :: SECONDS_PER_MINUTE = 60._r8_kind          !< Seconds in a minute [s]
++#endif MARS_GCM
+ real, public, parameter :: RAD_TO_DEG         = 180._r8_kind/PI      !< Degrees per radian [deg/rad]
+ real, public, parameter :: DEG_TO_RAD         = PI/180._r8_kind      !< Radians per degree [rad/deg]
+ real, public, parameter :: RADIAN             = RAD_TO_DEG           !< Equal to RAD_TO_DEG for backward compatability. [rad/deg]
+@@ -162,6 +198,36 @@ real, public, parameter :: VONKARM     = 0.40_r8_kind       !< Von Karman consta
+ real, public, parameter :: C2DBARS     = 1.e-4_r8_kind      !< Converts rho*g*z (in mks) to dbars: 1dbar = 10^4 (kg/m^3)(m/s^2)m [dbars]
+ real, public, parameter :: KELVIN      = 273.15_r8_kind     !< Degrees Kelvin at zero Celsius [K]
+ 
++#ifdef MARS_GCM
++!             Additional Mars constants
++
++real, public, parameter  :: co2_lheat= 5.90e5   !  Latent heat of fusion:  joules / kg
++
++!       Mars orbital constants are currently found in astronomy.F90
++!  real :: obliquity= 25.19
++!  real :: eccentricity= 0.093
++!  real :: equinox_fraction= 0.269461 !  yields equinox at day 180
++!  real :: days_in_year= 668.0
++!  real :: solar_constant= 589.0      !  W/m**2
++
++!   The thermal capacity of pure water ice might be included here
++!        Currently it is found in Mars_surface_mod  ( subroutine progts )
++
++!       CO2 ice specific heat:  J/kg/K
++!       cp_co2= 349 + 4.8 * ts         (1068 J/kg/K at 150 K)
++
++!
++!   Soil heat capacity and soil density are defined in Mars_surface_mod
++!      real  :: rho_ground= 1.50*1.0E3   !  Soil density:    kg / m**3
++!      real  :: cp_ground= 627.9    !  Soil heat capcity:     joules / kg / K
++!
++!!!      real  :: calerg= 4.1855e7    !  Conversion from caleries to ergs
++
++!!   real :: rhoice  = 0.9E03      This is currently used in dust_source_sink
++!                                        and radiation_driver.F90
++!
++#endif MARS_GCM
++
+ public :: constants_init
+ 
+ contains
+diff --git a/diag_manager/diag_data.F90 b/diag_manager/diag_data.F90
+index 7cd45798..45dbc367 100644
+--- a/diag_manager/diag_data.F90
++++ b/diag_manager/diag_data.F90
+@@ -65,7 +65,7 @@ use platform_mod
+   PUBLIC
+ 
+   ! Specify storage limits for fixed size tables used for pointers, etc.
+-  INTEGER, PARAMETER :: MAX_FIELDS_PER_FILE = 300 !< Maximum number of fields per file.
++  INTEGER, PARAMETER :: MAX_FIELDS_PER_FILE = 600 !< Maximum number of fields per file.
+   INTEGER, PARAMETER :: DIAG_OTHER = 0
+   INTEGER, PARAMETER :: DIAG_OCEAN = 1
+   INTEGER, PARAMETER :: DIAG_ALL   = 2
+@@ -296,7 +296,7 @@ use platform_mod
+   LOGICAL :: append_pelist_name = .FALSE.
+   LOGICAL :: mix_snapshot_average_fields =.FALSE.
+   INTEGER :: max_files = 31 !< Maximum number of output files allowed.  Increase via diag_manager_nml.
+-  INTEGER :: max_output_fields = 300 !< Maximum number of output fields.  Increase via diag_manager_nml.
++  INTEGER :: max_output_fields = 600 !< Maximum number of output fields.  Increase via diag_manager_nml.
+   INTEGER :: max_input_fields = 600 !< Maximum number of input fields.  Increase via diag_manager_nml.
+   INTEGER :: max_out_per_in_field = 150 !< Maximum number of output_fields per input_field.  Increase via diag_manager_nml.
+   INTEGER :: max_axes = 60 !< Maximum number of independent axes.
+diff --git a/field_manager/field_manager.F90 b/field_manager/field_manager.F90
+index 141d85cd..633afd65 100644
+--- a/field_manager/field_manager.F90
++++ b/field_manager/field_manager.F90
+@@ -207,6 +207,7 @@ logical            :: module_is_initialized  = .false.
+ !+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ public :: field_manager_init   !< (nfields, [table_name]) returns number of fields
+ public :: field_manager_end    !< ()
++public :: find_tagging_index   !< (num newtrac) designed to get the link between initial tracers and tagged new tracers (TB)
+ public :: find_field_index     !< (model, field_name) or (list_path)
+ public :: find_field_index_old !< (model, field_name) returns index of field_name in
+ public :: find_field_index_new
+@@ -468,6 +469,7 @@ character(len=17), parameter :: module_name       = 'field_manager_mod'
+ character(len=1),  parameter :: bracket_left      = '['
+ character(len=1),  parameter :: bracket_right     = ']'
+ character(len=1),  parameter :: comma             = ","
++character(len=1),  parameter :: semicolon         = ";"
+ character(len=1),  parameter :: comment           = '#'
+ character(len=1),  parameter :: dquote            = '"'
+ character(len=1),  parameter :: equal             = '='
+@@ -502,6 +504,15 @@ type, private :: field_mgr_type !{
+   type(method_type)                                   :: methods(MAX_FIELD_METHODS)
+ end type field_mgr_type !}
+ 
++!TB
++type, private :: tag_mgr_type !{
++  character(len=fm_field_name_len)                    :: field_type
++  character(len=fm_field_name_len)                    :: field_trac
++  character(len=fm_string_len)                        :: field_name
++  integer                                             :: num_methods
++  type(method_type)                                   :: methods(MAX_FIELD_METHODS)
++end type tag_mgr_type !}
++
+ !> @brief Private type for internal use
+ !> @ingroup field_manager_mod
+ type, private :: field_names_type !{
+@@ -510,6 +521,13 @@ type, private :: field_names_type !{
+   character(len=fm_string_len)                    :: fld_name
+ end  type field_names_type !}
+ 
++!TB
++type, private :: tag_names_type !{
++  character(len=fm_field_name_len)                    :: fld_type
++  character(len=fm_field_name_len)                    :: fld_trac
++  character(len=fm_string_len)                        :: fld_name
++end  type tag_names_type !}
++
+ !> @brief Private type for internal use
+ !> @ingroup field_manager_mod
+ type, private :: field_names_type_short !{
+@@ -545,6 +563,7 @@ end type field_def  !}
+ !+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 
+ type(field_mgr_type), private :: fields(MAX_FIELDS)
++type(tag_mgr_type), private :: tags(MAX_FIELDS)
+ 
+ !+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ !        Private variables
+@@ -562,10 +581,13 @@ character(len=50)                :: set_nonexp = "ABCDFGHIJKLMNOPQRSTUVWXYZabcdf
+ ! the string setnum then the string may be a number.
+ character(len=13)                :: setnum     = "0123456789+-."
+ integer                          :: num_fields         = 0
++integer, public                  :: num_tags         = 0   !TB
++integer                          :: num_newtrac      = 0   !TB total number of new tracers
++integer                          :: newtrac_array(MAX_FIELDS) ! array containing the number of each tracer associated with newtrac(i)
+ integer                          :: verb               = 0
+ integer                          :: verb_level_warn    = 0
+ integer                          :: verb_level_note    = 0
+-integer                          :: default_verbosity  = 0
++integer                          :: default_verbosity  = 1 ! TB
+ integer                          :: max_verbosity      = 1
+ type (field_def), pointer        :: loop_list_p        => NULL()
+ type (field_def), pointer        :: current_list_p     => NULL()
+@@ -610,7 +632,7 @@ character(len=fm_path_name_len)  :: name_str
+ character(len=fm_path_name_len)  :: type_str
+ character(len=fm_path_name_len)  :: val_name
+ character(len=fm_string_len)     :: tbl_name
+-integer                          :: control_array(MAX_FIELDS,3)
++integer                          :: control_array(MAX_FIELDS,4)
+ integer                          :: endcont
+ integer                          :: icount
+ integer                          :: index_list_name
+@@ -620,6 +642,7 @@ integer                          :: log_unit
+ integer                          :: ltrec
+ integer                          :: m
+ integer                          :: midcont
++integer                          :: midcont2
+ integer                          :: model
+ integer                          :: startcont
+ integer                          :: io_status
+@@ -630,6 +653,9 @@ type(field_names_type)           :: text_names
+ type(method_type_short)          :: text_method_short
+ type(method_type)                :: text_method
+ type(method_type_very_short)     :: text_method_very_short
++character(len=fm_path_name_len)  :: myname
++character(len=fm_path_name_len)  :: mypath
++character(len=fm_field_name_len) :: mybase
+ 
+ 
+ 
+@@ -890,7 +916,7 @@ do while (.TRUE.)
+ 
+       ltrec= len_trim(control_str)
+       control_array(:,1) = 1
+-      control_array(:,2:3) = ltrec
++      control_array(:,2:4) = ltrec
+       icount = 0
+       do l= 1, ltrec
+          if (control_str(l:l) == equal ) then
+@@ -921,6 +947,11 @@ do while (.TRUE.)
+               control_array(min(MAX_FIELDS,icount+1),1) = l+1 !Start of next string
+ 
+             endif
++         elseif (control_str(l:l) == semicolon) then
++
++              control_array(icount,4) = l-1   !End of previous string
++              !icount = icount + 1
++              control_array(min(MAX_FIELDS,icount+1),1) = l+1 !Start of next string
+          endif
+       enddo
+ 
+@@ -949,7 +980,8 @@ do while (.TRUE.)
+         do l = 1,icount
+           startcont = control_array(l,1)
+           midcont   = control_array(l,2)
+-          endcont   = control_array(l,3)
++          midcont2  = control_array(l,3) ! comma
++          endcont   = control_array(l,4) ! end chain
+ 
+           method_name = trim(type_str)
+           if (len_trim(method_name) > 0 ) then
+@@ -959,14 +991,36 @@ do while (.TRUE.)
+           endif
+ 
+           if (len_trim(method_name) > 0 ) then
+-            method_name = trim(method_name)//list_sep//&
+-                          trim(control_str(startcont:midcont-1))
++
++             if (midcont.lt.endcont ) then   ! if there is an equal
++                 method_name = trim(method_name)//list_sep//trim(control_str(startcont:midcont-1))
++
++                 if (midcont2.lt.endcont) then   !! there is a comma
++                    val_name =    trim(control_str(midcont+1:midcont2-1))
++                    call new_name(list_name, method_name, val_name )
++                    val_name =    trim(control_str(midcont2+1:endcont))
++                    call new_name(list_name, trim(method_name)//'2', val_name )
++                 else
++                    val_name =    trim(control_str(midcont+1:endcont))
++                    call new_name(list_name, method_name, val_name )
++                 endif
++
++             else if (midcont2.lt.endcont ) then   ! if there is a comma but no equal. Usually not possible
++                 method_name = trim(method_name)//list_sep//trim(control_str(startcont:midcont2-1))
++                 val_name =    trim(control_str(startcont:midcont2-1))
++                 call new_name(list_name, method_name, val_name )
++                 val_name =    trim(control_str(midcont2+1:endcont))
++                 call new_name(list_name, trim(method_name)//'2', val_name )
++
++             else ! no comma, no equal, then this is a specific flag. Not used for now
++                 method_name = trim(method_name)//list_sep//trim("flag")
++                 !val_name =    trim(control_str(startcont:endcont))
++                 !call new_name(list_name, method_name, val_name )
++
++             endif
+           else
+-            method_name = trim(control_str(startcont:midcont-1))
++            method_name = trim(control_str(startcont:endcont))
+           endif
+-          val_name =    trim(control_str(midcont+1:endcont))
+-
+-          call new_name(list_name, method_name, val_name )
+         enddo
+ 
+       endif
+@@ -998,6 +1052,7 @@ do while (.TRUE.)
+          endif
+       enddo
+    endif
++   mypath = fm_get_current_list()
+ 79 continue
+ enddo
+ 
+@@ -1005,6 +1060,25 @@ enddo
+ close(iunit, iostat=io_status)
+ if(io_status/=0) call mpp_error(FATAL, 'field_manager_mod: Error in closing file '//trim(tbl_name))
+ 
++!**************************************************************
++! 3) Read tagging table if it exists
++!**************************************************************
++if (file_exists(trim("tagging_table"))) then
++   !if (mpp_pe() == mpp_root_pe()) print*, 'TB18 : READ TAGGING_TABLE'
++   call tag_manager_init("tagging_table")
++endif
++
++!! Output for checks
++!do l=1,num_fields
++   !myname=trim(fields(l)%field_name)
++   !if (mpp_pe() == mpp_root_pe()) print*, 'TB18list myname=',myname
++   !if (mpp_pe() == mpp_root_pe()) print*, 'TB18list index=',fm_get_index(myname)
++   !if (mpp_pe() == mpp_root_pe()) print*, 'TB18list length=',fm_get_length(myname)
++
++   !call find_base(myname,mypath,mybase)
++   !if (mpp_pe() == mpp_root_pe()) print*, 'TB18list path=',mypath
++   !if (mpp_pe() == mpp_root_pe()) print*, 'TB18list base=',mybase
++!enddo
+ 
+ if(present(nfields)) nfields = num_fields
+ if (verb .gt. verb_level_warn) &
+@@ -1025,6 +1099,489 @@ call mpp_error(FATAL,trim(error_header)//' Error reading field table. Record = '
+ end subroutine field_manager_init
+ ! </SUBROUTINE>
+ 
++
++!####################################################################################
++!####################################################################################
++!####################################################################################
++
++
++subroutine tag_manager_init(table_name)   ! TB  nbtrac in/out, field in/out, table_name
++
++!! fields is already local
++!integer,                      intent(inout), optional :: nbtrac
++character(len=*), intent(in), optional :: table_name
++
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        local parameters
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++character(len=18), parameter :: sub_name     = 'tag_manager_init'
++character(len=64), parameter :: error_header = '==>Error from ' // trim(module_name)   //  &
++                                               '(' // trim(sub_name) // '): '
++character(len=64), parameter :: warn_header  = '==>Warning from ' // trim(module_name) //  &
++                                               '(' // trim(sub_name) // '): '
++character(len=64), parameter :: note_header  = '==>Note from ' // trim(module_name)    //  &
++                                               '(' // trim(sub_name) // '): '
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        local variables
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++character(len=1024)              :: record
++character(len=fm_path_name_len)  :: control_str
++character(len=fm_path_name_len)  :: list_name
++character(len=fm_path_name_len)  :: method_name
++character(len=fm_path_name_len)  :: name_str
++character(len=fm_path_name_len)  :: type_str
++character(len=fm_path_name_len)  :: val_name
++character(len=fm_string_len)     :: tbl_name
++integer                          :: icount,iunit,l,log_unit,ltrec,m,k
++integer                          :: num_newtrac_tag  ! number new tracer for the associated tag
++integer                          :: newtrac_array_tag(MAX_FIELDS) ! array containing the number of each tracer associated with newtrac(i)
++integer                          :: io_status
++logical                          :: flag_method
++type(method_type)                :: text_method
++type(method_type_short)          :: text_method_short
++type(tag_names_type)             :: text_tagnames  !TB
++integer                          :: nbtrac_tmp
++integer                          :: nbtrac
++
++character (len=fm_path_name_len) :: fld_typ, fld_nam
++integer :: mode, num_meth
++type(method_type), dimension(100) :: metho
++
++!! Check if tag_table exists
++if (.not. file_exists(trim(table_name))) then
++    call mpp_error(NOTE, trim(warn_header)//                       &
++         'No tag table ('//trim(table_name)//') available, so no tag are being registered.')
++endif
++if (mpp_pe() == mpp_root_pe()) then
++  if (verb .gt. verb_level_warn) then
++    call mpp_error(NOTE, trim(warn_header)//                       &
++         'No tag table ('//trim(table_name)//') available, so no tag are being registered.')
++  endif
++endif
++
++!! Open file tag_table
++open(newunit=iunit, file=trim(table_name), action='READ', iostat=io_status)
++if(io_status/=0) call mpp_error(FATAL, 'field_manager_mod: Error in opening file '//trim(table_name))
++
++log_unit = stdlog()
++
++do while (.TRUE.)
++   read(iunit,'(a)',end=88,err=981) record ! Read the first line in tag table "TAG", "type", "name"
++   write( log_unit,'(a)' ) record
++   if (record(1:1) == "#" ) cycle   ! if there is a comment, pass the line
++   ltrec =  LEN_TRIM(record)        ! ltrec = nb carac
++   if (ltrec .le. 0 ) cycle ! Blank line
++
++   icount = 0
++   !! Get number of element per line in tag namelist
++   do l= 1, ltrec
++      if (record(l:l) == '"' ) then
++         icount = icount + 1
++      endif
++   enddo
++
++   select case (icount)
++           ! eg: "TAG", "trac", ,"name"
++           case (6)
++             read(record,*,end=78,err=78) text_tagnames
++             text_tagnames%fld_type = lowercase(trim(text_tagnames%fld_type))
++             text_tagnames%fld_trac = lowercase(trim(text_tagnames%fld_trac))
++             text_tagnames%fld_name = lowercase(trim(text_tagnames%fld_name))
++           case default ! if icount is not equal to 6, there is a problem : too many or missing fields
++             call mpp_error(FATAL,trim(error_header)//'Unterminated field in tag_table header entry.'//trim(record))
++   end select
++
++   !! Number of tag entries
++   num_tags = num_tags + 1
++   !if (mpp_pe() == mpp_root_pe()) print*,'TB18 num tag=',num_tags,'/','max=',MAX_FIELDS
++   if (num_tags > MAX_FIELDS) call mpp_error(FATAL,trim(error_header)//'max tags exceeded') !!Max field limited to 150
++
++   ! ordening in table tag:
++   tags(num_tags)%field_type  = lowercase(trim(text_tagnames%fld_type))
++   tags(num_tags)%field_trac  = lowercase(trim(text_tagnames%fld_trac))
++   tags(num_tags)%field_name  = lowercase(trim(text_tagnames%fld_name))
++   tags(num_tags)%num_methods = 0
++
++   !!! Check to see that the first line is not the only line
++   if ( record(LEN_TRIM(record):LEN_TRIM(record)) == list_sep) cycle
++
++   !!! Now looking for the methods associated with the tag
++   flag_method = .TRUE.
++   m = 1
++   do while (flag_method)   ! Loop over next lines in tag_table until '/'
++         read(iunit,'(a)',end=982,err=983) record
++         !if (mpp_pe() == mpp_root_pe()) print*,'TB18 myrec=',record
++         if (LEN_TRIM(record) .le. 0) cycle          ! If the line is blank then fetch the next line.
++         if ( record(LEN_TRIM(record):LEN_TRIM(record)) == list_sep) then ! If last character / then the end of the methods
++            flag_method = .FALSE.
++            if (LEN_TRIM(record) == 1) cycle
++            record = record(:LEN_TRIM(record)-1) ! Remove the end of field method marker
++         endif
++         if (LEN_TRIM(record) .le. 0) cycle
++         if (record(1:1) == comment ) cycle
++
++         icount = 0
++         do l= 1, LEN_TRIM(record)
++            if (record(l:l) == dquote ) then
++               icount = icount + 1
++            endif
++         enddo
++
++         if (icount > 6 ) call mpp_error(FATAL,trim(error_header)//'Too many fields in tag entry.'//trim(record))
++
++         select case (icount)     ! example methode TYPE NAME CONTROL: "inigeo", "lat", "10,20"
++            case (4)  ! TB18imp : to be decided 4 or 6
++              read(record,*,end=984,err=985) text_method_short
++              tags(num_tags)%methods(m)%method_type = lowercase(trim(text_method_short%method_type))
++              tags(num_tags)%methods(m)%method_name = lowercase(trim(text_method_short%method_name))
++              tags(num_tags)%methods(m)%method_control = "" !lowercase(trim(text_method_short%method_control))
++              !if (mpp_pe() == mpp_root_pe()) print*,'TB18type1=',lowercase(trim(text_method_short%method_type))
++              !if (mpp_pe() == mpp_root_pe()) print*,'TB18name1=',lowercase(trim(text_method_short%method_name))
++              !if (mpp_pe() == mpp_root_pe()) print*,'TB18cont1=',lowercase(trim(text_method_short%method_control))
++              !if (mpp_pe() == mpp_root_pe()) print*,'TB18 methods tag:',tags(num_tags)%methods(m)
++            case (6)
++              read(record,*,end=984,err=985) text_method
++              tags(num_tags)%methods(m)%method_type = lowercase(trim(text_method%method_type))
++              tags(num_tags)%methods(m)%method_name = lowercase(trim(text_method%method_name))
++              tags(num_tags)%methods(m)%method_control = lowercase(trim(text_method%method_control))
++              !if (mpp_pe() == mpp_root_pe()) print*,'TB18type1=',lowercase(trim(text_method%method_type))
++              !if (mpp_pe() == mpp_root_pe()) print*,'TB18name1=',lowercase(trim(text_method%method_name))
++              !if (mpp_pe() == mpp_root_pe()) print*,'TB18cont1=',lowercase(trim(text_method%method_control))
++            case default
++              call mpp_error(FATAL,trim(error_header)//'Unterminated field in field entry.'//trim(record))
++         end select
++
++         tags(num_tags)%num_methods = tags(num_tags)%num_methods + 1
++
++         if (tags(num_tags)%num_methods > MAX_FIELD_METHODS) &
++            call mpp_error(FATAL,trim(error_header)//'Maximum number of methods for tags exceeded')
++
++         m = m + 1
++
++   enddo ! while flag method
++
++78 continue
++enddo
++
++88 continue
++close(iunit)
++
++!if (mpp_pe() == mpp_root_pe()) print*, 'TB18 end loop tag'
++
++default_method%method_type = 'none'
++default_method%method_name = 'none'
++default_method%method_control = 'none'
++
++! Now Tags have been read
++! num_tag is the number of tag entries
++! Loop over each tag
++! save num_fields value without tags. Num_field is then incremented in the following loop
++nbtrac=num_fields
++do l=1,num_tags
++   ! num_fields must not change in this loop
++   call get_tagged_tracer(l,nbtrac,num_newtrac_tag,newtrac_array_tag) ! get number of new tracers and their index associated with this tag
++   !if (mpp_pe() == mpp_root_pe()) print*,'TB18 LOOPCHECK: ',num_newtrac_tag,newtrac_array_tag(1:num_newtrac_tag)
++   !nbtrac_tmp=num_field
++   call define_new_tracer(l,num_newtrac_tag,newtrac_array_tag)  ! define the new tagged lists and tagged fields
++   newtrac_array(num_newtrac+1:num_newtrac+num_newtrac_tag)=newtrac_array_tag(1:num_newtrac_tag)
++   num_newtrac=num_newtrac+num_newtrac_tag
++enddo
++!if (mpp_pe() == mpp_root_pe()) print*,'TB18 LOOPCHECK'
++do l=1,num_fields
++   call get_field_info(l,fld_typ,fld_nam,mode,num_meth)
++   call get_field_methods(l,metho)
++enddo
++if (mpp_pe() == mpp_root_pe()) print*,'TB18 FINALNUMT=',num_fields
++if (mpp_pe() == mpp_root_pe()) print*,'TB18 FINALNUMTAGS=',num_tags
++if (mpp_pe() == mpp_root_pe()) print*,'TB18 FINALNUM_NEWTRAC=',num_newtrac
++if (mpp_pe() == mpp_root_pe()) print*,'TB18 FINAL TABLE_NEWTRAC=',newtrac_array(1:num_newtrac)
++
++return
++
++981 continue
++call mpp_error(FATAL,trim(error_header)//' Error reading tag table1 Record = '//trim(record))
++982 continue
++call mpp_error(FATAL,trim(error_header)//' Error reading tag table2 Record = '//trim(record))
++983 continue
++call mpp_error(FATAL,trim(error_header)//' Error reading tag table3 Record = '//trim(record))
++984 continue
++call mpp_error(FATAL,trim(error_header)//' Error reading tag table4 Record = '//trim(record))
++985 continue
++call mpp_error(FATAL,trim(error_header)//' Error reading tag table5 Record = '//trim(record))
++
++end subroutine tag_manager_init
++
++
++!####################################################################################
++!####################################################################################
++!####################################################################################
++
++
++subroutine get_tagged_tracer(indtag,nbtrac,num_newtrac_tag,newtrac_array_tag) ! nbtrac = number of tracer before any tagging (TRACER type)
++
++!! Get numbers of new tracers and the index of tracers associated with tags
++
++integer,                      intent(in) :: indtag ! Index of the tag fields
++integer,                      intent(in) :: nbtrac ! Number of tracer fields (outside tags)
++integer,                      intent(out) :: num_newtrac_tag !
++integer, intent(out)          :: newtrac_array_tag(MAX_FIELDS)
++
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        local parameters
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++character(len=18), parameter :: sub_name     = 'get_tagged_tracer'
++character(len=64), parameter :: error_header = '==>Error from ' // trim(module_name)   //  &
++                                               '(' // trim(sub_name) // '): '
++character(len=64), parameter :: warn_header  = '==>Warning from ' // trim(module_name) //  &
++                                               '(' // trim(sub_name) // '): '
++character(len=64), parameter :: note_header  = '==>Note from ' // trim(module_name)    //  &
++                                               '(' // trim(sub_name) // '): '
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        local variables
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++integer                          :: m,k
++
++num_newtrac_tag=0 ! Number of new tracers
++newtrac_array_tag(:)=0
++
++! loop on each tracer
++do k=1,nbtrac
++       if (trim(tags(indtag)%field_trac)=='atmos_mod') then   ! check Mod
++          num_newtrac_tag=num_newtrac_tag+1
++          newtrac_array_tag(num_newtrac_tag)=k
++          cycle
++       elseif (trim(tags(indtag)%field_trac)==trim(fields(k)%field_name)) then      ! check name
++          num_newtrac_tag=num_newtrac_tag+1
++          newtrac_array_tag(num_newtrac_tag)=k
++          cycle
++       else      ! check methods
++          do m=1,int(fields(k)%num_methods)
++             if (trim(tags(indtag)%field_trac)==trim(fields(k)%methods(m)%method_type)) then
++               num_newtrac_tag=num_newtrac_tag+1
++               newtrac_array_tag(num_newtrac_tag)=k
++               exit
++             elseif (trim(tags(indtag)%field_trac)==trim(fields(k)%methods(m)%method_name)) then
++               num_newtrac_tag=num_newtrac_tag+1
++               newtrac_array_tag(num_newtrac_tag)=k
++               exit
++             elseif (trim(tags(indtag)%field_trac)==trim(fields(k)%methods(m)%method_control)) then
++               num_newtrac_tag=num_newtrac_tag+1
++               newtrac_array_tag(num_newtrac_tag)=k
++               exit
++             else
++             !call mpp_error(FATAL,trim(error_header)//'Can not field tag trac within tracer fields.'//trim(tags(indtag)%field_trac))
++               !if (mpp_pe() == mpp_root_pe()) print*, 'TB18 : not tagging this tracer'
++             endif
++          enddo ! m, methods
++       endif
++enddo ! k=1, nbtrac
++
++if (mpp_pe() == mpp_root_pe()) print*, 'TB18 nb new tracers=',num_newtrac_tag
++if (mpp_pe() == mpp_root_pe()) print*, 'TB18 table newtrac=',newtrac_array_tag(1:num_newtrac_tag)
++
++end subroutine get_tagged_tracer
++
++
++!####################################################################################
++!####################################################################################
++!####################################################################################
++
++subroutine define_new_tracer(indtag,num_newtrac_tag,newtrac_array_tag)
++
++!! Define new fields tracer according to the tag entries in newtrac_array_tag
++
++integer,                      intent(in) :: indtag ! Index of the tag fields
++!integer,                      intent(in) :: nbtrac_tmp ! Number of current tracers, included those tagged
++integer,                      intent(in) :: num_newtrac_tag !
++integer,                      intent(in) :: newtrac_array_tag(MAX_FIELDS)
++
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        local parameters
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++character(len=18), parameter :: sub_name     = 'define_new_tracer'
++character(len=64), parameter :: error_header = '==>Error from ' // trim(module_name)   //  &
++				       '(' // trim(sub_name) // '): '
++character(len=64), parameter :: warn_header  = '==>Warning from ' // trim(module_name) //  &
++                                               '(' // trim(sub_name) // '): '
++character(len=64), parameter :: note_header  = '==>Note from ' // trim(module_name)    //  &
++                                               '(' // trim(sub_name) // '): '
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        local variables
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++integer                          :: m,k,l,nn
++logical                          :: fm_success
++character(len=fm_path_name_len)  :: list_name
++character(len=fm_path_name_len)  :: method_name
++character(len=fm_path_name_len)  :: val_name
++integer                          :: index_list_name
++character(len=fm_path_name_len)  :: control_str
++character(len=fm_path_name_len)  :: name_str
++character(len=fm_path_name_len)  :: type_str
++integer                          :: control_array(MAX_FIELDS,4)
++integer                          :: endcont
++integer                          :: icount
++integer                          :: ltrec
++integer                          :: midcont
++integer                          :: midcont2
++integer                          :: startcont
++
++do k=1,num_newtrac_tag
++   num_fields=num_fields+1   ! Increment
++   nn=num_fields
++   if (mpp_pe() == mpp_root_pe()) print*,'TB18 : INDEXFIELD TAG=',nn
++
++   !! Copy the tagged field and add the methods related to the tag
++   fields(nn)=fields(newtrac_array_tag(k))
++   fields(nn)%field_name=trim(fields(newtrac_array_tag(k))%field_name)//trim(tags(indtag)%field_name)
++
++   do m=1,int(tags(indtag)%num_methods)
++         fields(nn)%num_methods=fields(nn)%num_methods+1
++         fields(nn)%methods(int(fields(nn)%num_methods))%method_type = lowercase(trim(tags(indtag)%methods(m)%method_type))
++         fields(nn)%methods(int(fields(nn)%num_methods))%method_name = lowercase(trim(tags(indtag)%methods(m)%method_name))
++         fields(nn)%methods(int(fields(nn)%num_methods))%method_control = lowercase(trim(tags(indtag)%methods(m)%method_control))
++         !if (mpp_pe() == mpp_root_pe()) print*,'TB18type0=',lowercase(trim(tags(indtag)%methods(m)%method_type))
++         !if (mpp_pe() == mpp_root_pe()) print*,'TB18name0=',lowercase(trim(tags(indtag)%methods(m)%method_name))
++         !if (mpp_pe() == mpp_root_pe()) print*,'TB18cont0=',lowercase(trim(tags(indtag)%methods(m)%method_control))
++   enddo
++
++   !! Create list like Rick Slaters field manager code
++   list_name = list_sep//trim('atmos_mod')//list_sep//trim(fields(nn)%field_type)//&
++               list_sep//trim(fields(nn)%field_name)
++
++   index_list_name = fm_new_list(list_name, create = .true.)
++   !if (mpp_pe() == mpp_root_pe()) print*,'TB18 : INDEXLIST TAG=',index_list_name
++   ! A field called list_name could not be created.
++   if ( index_list_name == NO_FIELD ) &
++     call mpp_error(FATAL, trim(error_header)//'Could not set (tagged) field list for '//trim(list_name))
++
++   fm_success = fm_change_list(list_name)
++   !if (mpp_pe() == mpp_root_pe()) print*, 'TB18 : CHANGELIST TAG:',fm_success,'-LIST=',list_name
++
++   !!!!SUPERTB
++   !! Add the methods to the list of the new tracer and the methods related to the tag itselt
++   !! fields(nn)%num_methods already contains the tagging methods
++   !if (mpp_pe() == mpp_root_pe()) print*,'TB18 :nbmet=',int(fields(nn)%num_methods),nn
++   do m=1,int(fields(nn)%num_methods)
++
++         type_str    = trim(fields(nn)%methods(m)%method_type)
++         name_str    = trim(fields(nn)%methods(m)%method_name)
++         control_str = trim(fields(nn)%methods(m)%method_control)
++         !if (mpp_pe() == mpp_root_pe()) print*,'TB18type=',trim(type_str)
++         !if (mpp_pe() == mpp_root_pe()) print*,'TB18name=',trim(name_str)
++         !if (mpp_pe() == mpp_root_pe()) print*,'TB18cont=',trim(control_str)
++
++         if (len_trim(control_str) .le. 0 ) then   ! no control in the field
++            if (len_trim(name_str) .le. 0 ) then   ! no name either
++               control_str=type_str
++               type_str= " "
++            else
++               control_str = name_str
++               name_str = " "
++            endif
++         endif
++
++         ltrec= len_trim(control_str)
++         control_array(:,1) = 1
++         control_array(:,2:4) = ltrec
++         icount = 0
++         do l= 1, ltrec ! Check where are comma and equal sign in the string
++          if (control_str(l:l) == equal ) then
++            icount = icount + 1
++            control_array(icount,2) = l ! Middle of string, equal sign
++          elseif (control_str(l:l) == comma ) then
++           ! icount = icount + 1
++           ! control_array(icount,2) = l ! Middle of string, equal sign
++            if (icount .eq. 0) then     ! Bad format for field entry (comma without equals sign)
++              call mpp_error(FATAL,trim(error_header) //                                &
++                   ' Bad format for tagged field entry (comma without equals sign): ''' // trim(control_str) // '''')
++            elseif (icount .gt. MAX_FIELDS) then
++              call mpp_error(FATAL,trim(error_header) // ' Too many tagged fields in field entry: ''' // trim(control_str) // '''')
++            else
++              control_array(icount,3) = l   !End of previous string
++            endif
++          elseif (control_str(l:l) == semicolon) then
++              control_array(icount,4) = l-1   !End of previous string
++              control_array(min(MAX_FIELDS,icount+1),1) = l+1 !Start of next string
++          endif
++         enddo
++
++         !! Make sure that we point to the end of the string (minus any trailing comma) for the last set of values.
++         !!This fixes the case where the last set of values is a comma separated list
++         !if (control_str(ltrec:ltrec) .ne. comma) then
++         !  control_array(max(1,icount),3) = ltrec
++         !endif
++
++         !if (mpp_pe() == mpp_root_pe()) print*, 'TB18comtag control_str=',control_str,'    ltrec=  ',ltrec
++         !if (mpp_pe() == mpp_root_pe()) print*, 'TB18comtag control_array(:,1)=',control_array(:,1)
++         !if (mpp_pe() == mpp_root_pe()) print*, 'TB18comtag control_array(:,2)=',control_array(:,2)
++         !if (mpp_pe() == mpp_root_pe()) print*, 'TB18comtag control_array(:,3)=',control_array(:,3)
++         !if (mpp_pe() == mpp_root_pe()) print*, 'TB18comtag control_array(:,4)=',control_array(:,4)
++
++         !! Make the list for the method fields
++         if ( icount == 0 ) then   ! if no comma nor equal nor &
++          method_name = type_str
++          if (len_trim(method_name) > 0 ) then
++            method_name = trim(method_name)//list_sep//trim(name_str)
++          else
++            method_name = trim(name_str)
++          endif
++          val_name = control_str
++          call new_name(list_name, method_name, val_name )
++          !if (mpp_pe() == mpp_root_pe()) print*, 'TB18 TAGVALNAME=',trim(list_name),trim(method_name),trim(val_name)
++
++         else ! if comma or equal
++
++          do l = 1,icount
++           startcont = control_array(l,1)
++           midcont   = control_array(l,2) ! =
++           midcont2  = control_array(l,3) ! ,
++           endcont   = control_array(l,4)
++
++           method_name = trim(type_str)
++
++           if (len_trim(method_name) > 0 ) then
++            method_name = trim(method_name)//list_sep//trim(name_str)
++           else
++            method_name = trim(name_str)
++           endif
++
++           if (len_trim(method_name) > 0 ) then
++            method_name = trim(method_name)//list_sep//&
++                          trim(control_str(startcont:midcont-1))
++           else
++            method_name = trim(control_str(startcont:midcont-1))
++           endif
++
++           if (midcont2.lt.endcont) then   !! there is a comma
++             val_name =    trim(control_str(midcont+1:midcont2-1))
++             call new_name(list_name, method_name, val_name )
++             val_name =    trim(control_str(midcont2+1:endcont))
++             call new_name(list_name, trim(method_name)//'2', val_name )
++           else
++             val_name =    trim(control_str(midcont+1:endcont))
++             call new_name(list_name, method_name, val_name )
++           endif
++           !if (mpp_pe() == mpp_root_pe()) print*, 'TB18 TAGVALNAME=',trim(list_name),trim(method_name),trim(val_name)
++
++          enddo
++
++         endif ! if comma or equal
++
++   enddo   ! do m=1, num_method
++
++enddo ! k=1, num_newtrac_tag
++!nfields=nfields+num_newtrac_tag
++!if ((nbtrac+num_newtrac_tag).ge.MAX_FIELDS) then
++!   call mpp_error(FATAL,trim(error_header)//'Too many tracers and tags.')
++!endif
++
++end subroutine define_new_tracer
++
++
++!#######################################################################
++!#######################################################################
++!#######################################################################
++
+ subroutine check_for_name_duplication
+ integer :: i
+ 
+@@ -1389,6 +1946,41 @@ find_field_index_new = fm_get_index(field_name)
+ 
+ end function find_field_index_new
+ 
++! TB18 : function to give the number of the tracer asssociated with a tagging tracer
++! If ind_newtrac <= num_field - num_newtrac then the function return 0 because it does not
++! correspond to a tagging tracer but to an initial tracer.
++function find_tagging_index(ind_newtrac)
++
++integer                      :: find_tagging_index
++integer,          intent(in) :: ind_newtrac
++
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        local parameters
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++character(len=16), parameter :: sub_name     = 'find_tagging_index'
++character(len=64), parameter :: error_header = '==>Error from ' // trim(module_name)   //  &
++                                               '(' // trim(sub_name) // '): '
++character(len=64), parameter :: warn_header  = '==>Warning from ' // trim(module_name) //  &
++                                               '(' // trim(sub_name) // '): '
++character(len=64), parameter :: note_header  = '==>Note from ' // trim(module_name)    //  &
++                                               '(' // trim(sub_name) // '): '
++
++
++if (ind_newtrac.le.num_fields - num_newtrac) then
++   find_tagging_index=0
++elseif (ind_newtrac.gt.num_fields) then
++   find_tagging_index=0
++else
++   find_tagging_index=newtrac_array(ind_newtrac+num_newtrac-num_fields)
++endif
++
++!if (mpp_pe() == mpp_root_pe()) print*, 'TB18 numfields=',num_fields,' num_newtrac=',num_newtrac
++!if (mpp_pe() == mpp_root_pe()) print*, 'TB18 ind_newtrac=',ind_newtrac,' find_tagging_index=',find_tagging_index
++!if (mpp_pe() == mpp_root_pe()) print*, 'TB18 array=',newtrac_array
++
++return
++
++end function find_tagging_index
+ !#######################################################################
+ !#######################################################################
+ 
+diff --git a/fms2_io/fms_io_utils.F90 b/fms2_io/fms_io_utils.F90
+index 5d8898c3..18cac40c 100644
+--- a/fms2_io/fms_io_utils.F90
++++ b/fms2_io/fms_io_utils.F90
+@@ -248,6 +248,7 @@ subroutine string_copy(dest, source, check_for_null)
+   if (i < 1 ) i = len_trim(source)
+ 
+   if (len_trim(source(1:i)) .gt. len(dest)) then
++ print*,'len source = ',len_trim(source(1:i)),'len dest = ',len(dest)
+     call error("The input destination string is not big enough to" &
+                  //" to hold the input source string.")
+   endif
+diff --git a/libFMS.F90 b/libFMS.F90
+index fec4e6c5..e770f805 100644
+--- a/libFMS.F90
++++ b/libFMS.F90
+@@ -238,7 +238,7 @@ module fms
+ 
+   !> memutils
+   use memutils_mod, only: memutils_init, print_memuse_stats
+-
++#ifndef MARS_GCM
+   !> monin_obukhov
+   use monin_obukhov_mod, only: monin_obukhov_init, monin_obukhov_end, &
+                                mo_drag, mo_profile, mo_diff, stable_mix
+@@ -247,7 +247,7 @@ module fms
+                                monin_obukhov_derivative_m, monin_obukhov_profile_1d, &
+                                monin_obukhov_integral_m, monin_obukhov_integral_tq, &
+                                monin_obukhov_stable_mix
+-
++#endif
+   !> mosaic
+   use mosaic2_mod, only: get_mosaic_ntiles, get_mosaic_ncontacts, &
+                       get_mosaic_grid_sizes, get_mosaic_contact, &
+diff --git a/mosaic2/grid2.F90 b/mosaic2/grid2.F90
+index bf4c1e97..c5e7bdfa 100644
+--- a/mosaic2/grid2.F90
++++ b/mosaic2/grid2.F90
+@@ -158,7 +158,7 @@ end subroutine grid_end
+ !> @brief Determine if we are using the great circle algorithm
+ !! @return Logical flag describing if we are using the great circlealgorithm
+ function get_great_circle_algorithm()
+-   character(len=128)     :: attvalue
++   character(len=1024)     :: attvalue
+    logical :: get_great_circle_algorithm
+ 
+    get_great_circle_algorithm = .false.

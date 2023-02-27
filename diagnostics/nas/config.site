@@ -1,0 +1,15 @@
+# Default site configuration for NAS Lou File System
+#
+# configure options
+test -z "$with_mpi" && with_mpi=no
+# Standard prefix location for FRE distribution
+test "$prefix" = NONE && prefix=/u/$USER/FRE-NCtools
+
+# Standard compilers on nas
+test -z "$CC" && CC=icc
+test -z "$FC" && FC=ifort
+
+# Compile/Link flags
+test -z "$FCFLAGS" && FCFLAGS="-fltconsistency -fno-alias -stack_temps -ftz -assume byterecl -i4 -traceback"
+
+test -z "$CFLAGS" && CFLAGS="-std=c11"

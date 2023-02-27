@@ -1,0 +1,1240 @@
+Copyright © 2023, United States Government, as represented by the Administrator of the National Aeronautics and Space Administration. All rights reserved. 
+The NASA Ames Mars Global Climate Model Patches is licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE‐2.0.
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+diff --git a/postprocessing/plevel/plev_constants.F90 b/postprocessing/plevel/plev_constants.F90
+index ee8bc61..ff0e23d 100644
+--- a/postprocessing/plevel/plev_constants.F90
++++ b/postprocessing/plevel/plev_constants.F90
+@@ -8,9 +8,24 @@ module plev_constants_mod
+ implicit none
+ private
+ 
++#ifndef MARS
+ real, public, parameter :: GRAV   = 9.80
+ real, public, parameter :: RDGAS  = 287.04
+ real, public, parameter :: RVGAS  = 461.50
+ real, public, parameter :: TFREEZE  = 273.16
++#else
++
++real, public, parameter :: RADIUS = 3386.0e3   
++real, public, parameter :: OMEGA  = 7.0882e-5 
++real, public, parameter :: GRAV   = 3.72    
++real, public, parameter :: RDGAS  = 189.02 
++real, public, parameter :: CP_AIR = 735.94 
++real, public, parameter :: KAPPA  = RDGAS/CP_AIR  
++real, public, parameter :: RVGAS = 461.50 
++real, public, parameter :: TFREEZE  = 273.16
++
++#endif
++
++
+ 
+ end module plev_constants_mod
+diff --git a/postprocessing/plevel/plevel.sh b/postprocessing/plevel/plevel.sh
+index 00ce8dc..5802f59 100755
+--- a/postprocessing/plevel/plevel.sh
++++ b/postprocessing/plevel/plevel.sh
+@@ -22,6 +22,7 @@ allow_zero=.false.
+ default_missval=.false.
+ mask_extrap=.true.
+ tlist=
++pk_name="pk"
+ 
+ # default is ncep reanalysis levels
+ plevs="100000 92500 85000 70000 60000 50000 40000 30000 25000 \
+@@ -29,7 +30,7 @@ plevs="100000 92500 85000 70000 60000 50000 40000 30000 25000 \
+ 
+ #-----------------------------------------------------------------------
+ 
+-while getopts 03amxi:o:d:p:t:z:s: arg
++while getopts 03amxi:o:d:p:t:z:s:k: arg
+ do
+     case $arg in
+        0) allow_zero=.true.;;
+@@ -44,6 +45,8 @@ do
+        t) tlist=$OPTARG;;
+        z) deflation=$OPTARG;;
+        s) shuffle=$OPTARG;;
++       k) pk_name=$OPTARG;;
++       
+        *) exit 1;;
+     esac
+ done
+@@ -61,7 +64,7 @@ The input model grid is a hybrid sigma-pressure coordinate
+ and the output pressure levels may be specified.
+ The minimum required input fields are "bk", "pk", and "ps".
+ 
+-Usage:  $name [-a] [-3] [-0] [-f] [-d #] -i file [-o ofile] [-m] [-z #] [-s] [fields.....]
++Usage:  $name [-a] [-3] [-0] [-f] [-d #] -i file [-o ofile] [-m] [-z #] [-s] [-k pk_name] [fields.....]
+ 
+         -a        = Output all fields converting 3d fields to pressure levels.
+         -3        = Output and convert all 3d fields to pressure levels.
+@@ -84,6 +87,7 @@ Usage:  $name [-a] [-3] [-0] [-f] [-d #] -i file [-o ofile] [-m] [-z #] [-s] [fi
+                     Defaults to input file settings.
+         -s 1|0      If using NetCDF4, use shuffle if 1 and don't use if 0.
+                     Defaults to input file settings.
++        -k pk_name = name of pk variable
+ 
+         fields    = A list of (additional) output fields. If this list is not supplied,
+                     then the "-a" or "-3" option must be specified.  Possible list entries
+@@ -154,7 +158,7 @@ i=0
+ for prs in $plevs;
+ do
+     let "i=$i+1"
+-    echo "    pout($i) =  $prs.," >> $namelist
++    echo "    pout($i) =  $prs," >> $namelist
+ done
+ 
+ # more namelist values
+@@ -192,6 +196,10 @@ done
+ 
+    echo " /" >> $namelist
+ 
++   echo " &names" >> $namelist
++   echo "    pk_name = $pk_name" >> $namelist
++   echo " /" >> $namelist
++
+ $executable
+ 
+ #rm -f $namelist
+diff --git a/postprocessing/plevel/pressure_interp.F90 b/postprocessing/plevel/pressure_interp.F90
+index c904075..d5dfe62 100644
+--- a/postprocessing/plevel/pressure_interp.F90
++++ b/postprocessing/plevel/pressure_interp.F90
+@@ -85,10 +85,10 @@ contains
+          k = index(i,j)
+          factr(i,j) = (log_pout          -log_pfull(i,j,k)) /   &
+                       (log_pfull(i,j,k-1)-log_pfull(i,j,k))
+-        !factr(i,j) = min(1.,factr(i,j)) ! no extrap above top level
+-        !factr(i,j) = max(0.,factr(i,j)) ! no extrap below bottom level
+-         factr(i,j) = min(+1.5,factr(i,j)) ! limit extrap above top level
+-         factr(i,j) = max(-0.5,factr(i,j)) ! limit extrap below bottom level
++        factr(i,j) = min(1.,factr(i,j)) ! no extrap above top level
++        factr(i,j) = max(0.,factr(i,j)) ! no extrap below bottom level
++        ! factr(i,j) = min(+1.5,factr(i,j)) ! limit extrap above top level
++        ! factr(i,j) = max(-0.5,factr(i,j)) ! limit extrap below bottom level
+          up(i,j,n) = u(i,j,k) + factr(i,j) * (u(i,j,k-1) - u(i,j,k))
+          vp(i,j,n) = v(i,j,k) + factr(i,j) * (v(i,j,k-1) - v(i,j,k))
+       enddo
+@@ -174,7 +174,10 @@ contains
+ 
+          do j = 1, jdim
+          do i = 1, idim
+-             do k = 2, kbot(i,j)
++             if (log_pout(n) < log_pfull(i,j,1)) then
++                exit
++             endif
++             do k = 2,kbot(i,j)
+                 if (log_pout(n) <= log_pfull(i,j,k)) then
+                     Control % index (i,j,n) = k
+                     Control % mask  (i,j,n) = .false.
+@@ -190,10 +193,10 @@ contains
+              Control % factr(i,j,n) =  &
+                                (log_pout(n) - log_pfull(i,j,k)) / &
+                         (log_pfull(i,j,k-1) - log_pfull(i,j,k))
+-            !Control % factr(i,j,n) = min(1.,Control%factr(i,j,n)) ! no extrap above top level
+-            !Control % factr(i,j,n) = max(0.,Control%factr(i,j,n)) ! no extrap below bottom level
+-             Control % factr(i,j,n) = min(+1.5,Control%factr(i,j,n)) ! limit extrap above top level
+-             Control % factr(i,j,n) = max(-0.5,Control%factr(i,j,n)) ! limit extrap below bottom level
++            Control % factr(i,j,n) = min(1.,Control%factr(i,j,n)) ! no extrap above top level
++            Control % factr(i,j,n) = max(0.,Control%factr(i,j,n)) ! no extrap below bottom level
++            ! Control % factr(i,j,n) = min(+1.5,Control%factr(i,j,n)) ! limit extrap above top level
++            ! Control % factr(i,j,n) = max(-0.5,Control%factr(i,j,n)) ! limit extrap below bottom level
+          enddo
+          enddo 
+ 
+diff --git a/postprocessing/plevel/run_pressure_interp.F90 b/postprocessing/plevel/run_pressure_interp.F90
+index 1c96947..7f85107 100644
+--- a/postprocessing/plevel/run_pressure_interp.F90
++++ b/postprocessing/plevel/run_pressure_interp.F90
+@@ -33,8 +33,14 @@ integer, parameter :: header_buffer_val = 16384
+ integer            ::  blksz = 65536  ! blksz must be writable for nf__create
+ 
+  character(len=256)           ::  in_file_name, out_file_name
++ character(len=256)           ::  pres_file_name, pstd_file_name
++
+ !character(len=NF90_MAX_NAME) ::  in_file_name, out_file_name
+   real, dimension(MAX_PLEVS) :: pout
++
++!       
++real  :: pinput_scale = 1.0
++
+ character(len=NF90_MAX_NAME) ::    ps_name = 'ps',     &
+                                 zsurf_name = 'zsurf',  &
+                                  temp_name = 'temp',   &
+@@ -43,9 +49,10 @@ character(len=NF90_MAX_NAME) ::    ps_name = 'ps',     &
+                                    pk_name = 'pk',     &
+                                   res_name = 'res',    &
+                                  hght_name = 'hght',   &
+-                                  slp_name = 'slp'
++                                  slp_name = 'slp',    &
++                                  tod_name = 'time_of_day_24'
+ 
+- character(len=NF90_MAX_NAME) :: pres_name_out = 'level'
++ character(len=NF90_MAX_NAME) :: pres_name_out = 'pstd'
+ !character(len=NF90_MAX_NAME) :: time_name_out = 'time'   ! not used
+ 
+  character(len=NF90_MAX_NAME), dimension(MAX_FIELD_NAMES) :: field_names
+@@ -82,6 +89,8 @@ logical :: allow_zero_sphum = .false.
+ 
+ integer :: time_beg=1, time_end=0, time_inc=1
+ 
++!rjw
++real    :: missing_value_inpt = -1.e10
+ ! user-requested deflation and shuffle settings, -1 means use input file settings
+ integer :: user_deflation=-1, user_shuffle=-1
+ ! for new variables, use the maximum deflation/shuffle settings of any input
+@@ -119,9 +128,18 @@ integer :: new_var_deflation, new_var_shuffle
+ !    1)  currently only ONE input atmospheric file and ONE output file
+ !        are allowed
+ !
++!        RJW:   This is been modified to allow zsurf, bk and pk data to be assessed via 
++!                       an auxilliary file given by namelist variable pres_file_name 
++!
+ !    2)  the namelist file must be passed to the program by
+ !        redirection: e.g., a.out < namelist
+ !
++!            RJW:  Currently, the code interpolates to standard output levels given by
++!                  namelist variable pout 
++!                       Unix scripting requires usage of integer values (in Pa). 
++!                     Better would be an optional input ascii file, which would allow
++!                           arbitrary  real values. 
++!
+ !#######################################################################
+ 
+ namelist /names/ temp_name, sphum_name, hght_name, slp_name, &
+@@ -133,7 +151,8 @@ namelist /input/ in_file_name, out_file_name,  field_names,  pout, &
+                  time_beg, time_end, time_inc,                     &
+                  allow_zero_topog, allow_zero_sphum,               &
+                  use_default_missing_value, verbose,               &
+-                 user_deflation, user_shuffle
++                 user_deflation, user_shuffle, &
++                 pres_file_name, pstd_file_name, pinput_scale, missing_value_inpt
+ 
+ !----- axis names -----
+ 
+@@ -145,17 +164,19 @@ namelist /input/ in_file_name, out_file_name,  field_names,  pout, &
+ 
+ 
+ character(len=NF90_MAX_NAME) :: xmass_in, ymass_in
+-character(len=NF90_MAX_NAME) :: pfull_in, time_in
++character(len=NF90_MAX_NAME) :: pfull_in, time_in,tod_in
++
++logical :: do_diurn = .false.
+ 
+ character(len=NF90_MAX_NAME) :: xmass_out, ymass_out
+ character(len=NF90_MAX_NAME) :: edge_name
+ character(len=NF90_MAX_NAME) :: attname
+ character(len=NF90_MAX_NAME) :: file_title
+ 
+-integer :: dimids_mass(4)
++integer :: dimids_mass(5)
+ !-----------------------------------------------------------------------
+ 
+-integer :: ncid_in, ncid_out
++integer :: ncid_in, ncid_out, ncid_aux, ncid_topo
+ type (pres_interp_type) :: Interp(2)
+ 
+ 
+@@ -187,18 +208,20 @@ integer :: varid_bk,       varid_pk,     &
+ integer :: varid_hght_out, varid_slp_out
+ 
+ integer :: varid_time_in,        varid_time_out
++integer :: varid_tod_in,       varid_tod_out
+ integer :: varid_time_bounds_in, varid_time_bounds_out
+ integer :: varid_tavg_in(3),     varid_tavg_out(3)
+ 
+ integer :: index_ps, index_zsurf, index_temp, index_sphum
+ 
+ integer :: istat, ivar, itime, otime, i, n, kv, attnum, numatts, recdim,  &
+-           nlon, nlat, nlev, ndim, dimids(NF90_MAX_VAR_DIMS), dimid, naxes, dimid_tbnds
+-integer :: nlev_out, start(4), kount(4), ntimes, num_field_names
++           nlon, nlat, nlev, ndim, dimids(NF90_MAX_VAR_DIMS), dimid, naxes, dimid_tbnds, &
++           ntod, itod, todid
++integer :: nlev_out, start(5), kount(5), ntimes, num_field_names
+ integer :: itime_beg, itime_end, itime_inc
+ integer :: isg, ieg, jsg, jeg, is, ie, js, je
+ real    :: mval_hght, mval_slp
+-real(8) :: time, time_bnds(2)
++real(8) :: time, time_bnds(2),tod
+ logical :: done, do_phalf
+ integer :: idim, nlen
+ integer :: unit, ierr, io, in_format, cmode
+@@ -207,6 +230,7 @@ real, allocatable :: axisdata(:)
+ real, allocatable, dimension(:)     :: bk, pk
+ real, allocatable, dimension(:,:)   :: res
+ real, allocatable, dimension(:,:,:) :: zsurf, ps
++real, allocatable, dimension(:,:,:) :: psdiurn
+ 
+ real, parameter :: tlapse = 6.5e-3
+ real, parameter :: tref   = 288.
+@@ -223,6 +247,9 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+ 
+       do i=1,len(out_file_name);  out_file_name(i:i) = ' '; enddo
+       do i=1,len( in_file_name);   in_file_name(i:i) = ' '; enddo
++      do i=1,len( pres_file_name);   pres_file_name(i:i) = ' '; enddo
++      do i=1,len( pstd_file_name);   pstd_file_name(i:i) = ' '; enddo
++
+       pout = 0.0
+ 
+       do ivar = 1, MAX_FIELD_NAMES
+@@ -233,14 +260,30 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+       if (exists) then
+          open (10, file='plev.input.nml')
+          read (10, nml=input, end=1, err=1)
++         read (10, nml=names, end=1, err=1)
+       1  close (10)
+          !write (*,input)
+       endif
+ 
++!rjw
++!   --- if pstd_file_name name has no length then use the pout values specified in the namelist 
++!rjw     if (  in_file_name(1:1) == ' '  ) then
+          do i = 1, MAX_PLEVS
+             if (pout(i) < 1.e-6) exit
+             nlev_out = i
+          enddo
++!rjw     else
++!rjw
++!rjw        If pout not present, then read in pressure levels from pstd_file_name
++!rjw       fopen(12, file= trim(pstd_file_name) )
++!rjw         trim(pstd_file_name) read
++!rjw   
++!rjw     endif
++
++       DO i= 1, nlev_out
++          pout(i)= pout(i) / pinput_scale
++       ENDDO 
++ 
+  
+ !     ---- count the number of field names ----
+          num_field_names = 0
+@@ -273,11 +316,22 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+ 
+     !--- opening input files ---
+      istat = NF90_OPEN (trim(in_file_name), NF90_NOWRITE, ncid_in, blksz)
+-     if (istat /= NF90_NOERR) call error_handler (ncode=istat)
++     if (istat /= NF90_NOERR) call error_handler ('error opening file',ncode=istat)
++
++     inquire (file= trim(pres_file_name),exist=exists)
++
++      if (exists) then
++         istat = NF90_OPEN (trim(pres_file_name), NF90_NOWRITE, ncid_aux)
++         print *, 'Using specfified file for ak and bk values: ', trim(pres_file_name)  
++
++       else
++           ncid_aux= ncid_in       !   This is the default:  pk and bk are in the input file 
++       endif
++
+ 
+     !--- get the time axis identifier ---
+      istat = NF90_INQUIRE ( ncid_in, nattributes=numatts, unlimiteddimid=recdim,formatnum=in_format )
+-     if (istat /= NF90_NOERR) call error_handler (ncode=istat)
++     if (istat /= NF90_NOERR) call error_handler ('error finding time axis',ncode=istat)
+ 
+ !    --------- set flags for special computed fields --------
+ 
+@@ -292,36 +346,68 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+ 
+ !    ------- check to see if required fields are in atmos file -------
+ 
+-     call check_fields ( ncid_in )
++!! rjw    Ive added 2 netcdf file indices to locate auxiliary and topo data 
++     call check_fields ( ncid_in, ncid_aux, ncid_topo )
++
+ 
+ !-----------------------------------------------------------------------
+ !--- get the size of the vertical axis ---
+-     istat = NF90_INQUIRE_VARIABLE (ncid_in, varid_bk, ndims=ndim, dimids=dimids)
++ !!rjw    istat = NF90_INQUIRE_VARIABLE (ncid_in, varid_bk, ndims=ndim, dimids=dimids)
++ !!rjw    if (istat /= NF90_NOERR) call error_handler ('getting dimids for '//trim(bk_name), ncode=istat)
++
++ !!rjw     istat = NF90_INQUIRE_DIMENSION (ncid_in, dimids(1), len=nlev)
++ !!rjw     if (istat /= NF90_NOERR) call error_handler ('getting dim length for '//trim(bk_name), ncode=istat)
++
++     istat = NF90_INQUIRE_VARIABLE (ncid_aux, varid_bk, ndims=ndim, dimids=dimids)
+      if (istat /= NF90_NOERR) call error_handler ('getting dimids for '//trim(bk_name), ncode=istat)
+-     istat = NF90_INQUIRE_DIMENSION (ncid_in, dimids(1), len=nlev)
++
++
++     istat = NF90_INQUIRE_DIMENSION (ncid_aux, dimids(1), len=nlev)
+      if (istat /= NF90_NOERR) call error_handler ('getting dim length for '//trim(bk_name), ncode=istat)
+      nlev = nlev-1
++     print*,'nlev = ',nlev
+ 
+     !--- get the names of the input horizontal mass axes ---
+      istat = NF90_INQUIRE_VARIABLE (ncid_in, varid_ps_in, ndims=ndim, dimids=dimids)
+-     if (istat /= NF90_NOERR) call error_handler (ncode=istat)
++     if (istat /= NF90_NOERR) call error_handler ('error in reading ps',ncode=istat)
++
+ 
+-     if (ndim /= 3) call error_handler ('variable '//trim(ps_name)//&
++     if (ndim > 3) then
++        istat = NF90_INQ_DIMID (ncid_in,tod_name,todid)
++        if (istat /= NF90_NOERR) then
++           tod_name='time_of_day_12'
++           istat = NF90_INQ_DIMID (ncid_in,tod_name,todid)
++           if (istat /= NF90_NOERR) call error_handler(trim(ps_name)//' has more than three dimensions ' &
++                    //' not including time of day', ncode=istat)
++        endif
++        do_diurn = .true.
++        print*,'tod_name is ',tod_name, 'dim ids = ',dimids(1:ndim), 'todid = ',todid
++     else 
++        if (ndim /= 3) call error_handler ('variable '//trim(ps_name)//&
+                                     &' must have three dimensions: x,y,t')
++     endif
+ 
+     !--- size and name of input horizontal mass axes ---
+      istat = NF90_INQUIRE_DIMENSION (ncid_in, dimids(1), name=xmass_in, len=nlon)
+      if (istat /= NF90_NOERR) call error_handler ('getting name and length of first mass dimension', ncode=istat)
+      istat = NF90_INQUIRE_DIMENSION (ncid_in, dimids(2), name=ymass_in, len=nlat)
+      if (istat /= NF90_NOERR) call error_handler ('getting name and length of second mass dimension', ncode=istat)
+-     istat = NF90_INQUIRE_DIMENSION (ncid_in, dimids(3), name=time_in)
++!     istat = NF90_INQUIRE_DIMENSION (ncid_in, dimids(3), name=time_in)
++!     print*,'recdim = ',recdim,'dimids 3,4 = ',dimids(3),dimids(4)
++     istat = NF90_INQUIRE_DIMENSION (ncid_in, recdim, name=time_in)
+      if (istat /= NF90_NOERR) call error_handler ('getting name of last mass dimension (time)', ncode=istat)
+ 
++     if (do_diurn) then
++      istat = NF90_INQUIRE_DIMENSION ( ncid_in, todid, name=tod_in, len=ntod)
++      if (istat /= NF90_NOERR) call error_handler ('getting time of day mass dimension', ncode=istat)
++      print*,'ntod = ',ntod,'name tod = ',trim(tod_in),'todid = ',todid
++     endif
++
+ !-----------------------------------------------------------------------
+ !--- set output fields using all input fields ---
+ 
+      if (do_all_fields .or. do_all_3d_fields) then
+-         call set_all_field_names ( ncid_in, field_names, num_field_names )
++         call set_all_field_names ( ncid_in, do_diurn, field_names, num_field_names )
+      endif
+ 
+ !--- error: if there were no requested fields ---
+@@ -352,13 +438,19 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+      allocate (res  (is:ie,js:je),    &
+                zsurf(is:ie,js:je,1),  &
+                ps   (is:ie,js:je,1)   )
++     allocate (psdiurn(is:ie,js:je,1))
+ 
+ !    ---- read vert coord variables and set up vert coord ----
+ 
+-     istat = NF90_GET_VAR (ncid_in, varid_bk, bk)
++!!rjw     istat = NF90_GET_VAR (ncid_in, varid_bk, bk)
++
++     istat = NF90_GET_VAR (ncid_aux, varid_bk, bk)
++
+      if (istat /= NF90_NOERR) call error_handler (ncode=istat)
+      if (varid_pk > 0) then
+-        istat = NF90_GET_VAR (ncid_in, varid_pk, pk)
++!!rjw        istat = NF90_GET_VAR (ncid_in, varid_pk, pk)
++        istat = NF90_GET_VAR (ncid_aux, varid_pk, pk)
++
+         if (istat /= NF90_NOERR) call error_handler (ncode=istat)
+      else
+         pk = 0.0
+@@ -469,7 +561,10 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+      istat = NF90_DEF_VAR (ncid_out, trim(pres_name_out), NF90_REAL4, (/dimids_mass(3)/), varid_pout)
+      if (istat /= NF90_NOERR) call error_handler (ncode=istat)
+    ! attributes for this axis
+-     istat = NF90_PUT_ATT (ncid_out, varid_pout, 'units', 'hPa')
++!     istat = NF90_PUT_ATT (ncid_out, varid_pout, 'units', 'hPa')
++!rjw          Output pressure grid in Pa rather than hPa 
++     istat = NF90_PUT_ATT (ncid_out, varid_pout, 'units', 'Pa')
++
+      if (istat /= NF90_NOERR) call error_handler ('putting attributes for pout dimension', ncode=istat)
+      istat = NF90_PUT_ATT (ncid_out, varid_pout, 'long_name', 'pressure')
+      if (istat /= NF90_NOERR) call error_handler (ncode=istat)
+@@ -481,9 +576,19 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+      if (istat /= NF90_NOERR) call error_handler (ncode=istat)
+ 
+    ! copy the time axis
++   ! get time of day information
++   if (do_diurn) then
++     call copy_axis(ncid_in, time_in, ncid_out, dimids_mass(5), &
++                     varid_time_in, varid_time_out, ntimes)
++     call copy_axis(ncid_in, tod_in, ncid_out, dimids_mass(4), &
++                     varid_tod_in, varid_tod_out, ntod)
++   else
+    ! get variable identifiers and length
+      call copy_axis (ncid_in, time_in, ncid_out, dimids_mass(4), &
+                      varid_time_in, varid_time_out, ntimes)
++   endif
++
++  print*,'dimids_mass = ',dimids_mass(1:5)
+ 
+    ! set up time axis indexing
+      itime_beg = time_beg
+@@ -495,6 +600,7 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+     !if (itime_beg < itime_end) itime_end = itime_beg  ! process at least one time level
+ 
+ 
++#ifdef SKIP
+    ! check for time averaging "bounds"
+    ! make sure axis is copied (time axis already copied)
+      do i=1,NF90_MAX_NAME;  name_time_bounds(i:i) = ' '; enddo
+@@ -525,6 +631,10 @@ real, parameter :: rgog = RDGAS*tlapse/GRAV
+      else
+          do_time_bounds = .false.
+      endif
++#else
++         do_time_bounds = .false.
++
++#endif 
+ 
+ !-----------------------------------------------------------------------
+ !-------------- define new variables for output file -----------------
+@@ -598,7 +708,8 @@ endif
+           if (.not.field_name_present(zsurf_name,field_names,num_field_names)) then
+               num_field_names = num_field_names + 1
+               index_zsurf = num_field_names
+-              call get_input_variable_info ( zsurf_name, ncid_in, Fields(num_field_names) )
++!rjw              call get_input_variable_info ( zsurf_name, ncid_in, Fields(num_field_names) )
++              call get_input_variable_info ( zsurf_name, ncid_topo, Fields(num_field_names) )
+           endif
+       endif
+ 
+@@ -621,6 +732,11 @@ endif
+ !-----------------------------------------------------------------------
+ ! ---- copy variable info for time averaging -----
+ 
++!     if (do_diurn) then
++!       print*,'dimids(4) = ',dimids_mass(4), 'dimids(5) = ',dimids_mass(5),'dimids(rec) = ',dimids_mass(recdim)
++!     endif
++
++     if (.not.do_diurn) then
+       if (do_time_bounds) then
+           call copy_variable ( ncid_in, trim(name_time_bounds), ncid_out,    &
+                                (/dimid_tbnds,dimids_mass(4)/), varid_time_bounds_out )
+@@ -635,7 +751,21 @@ endif
+                                   (/dimids_mass(4)/), varid_tavg_out(i) )
+           enddo
+        endif
+-
++     else
++      if (do_time_bounds) then
++          call copy_variable ( ncid_in, trim(name_time_bounds), ncid_out,    &
++                               (/dimid_tbnds,dimids_mass(5)/), varid_time_bounds_out )
++      endif
++      if (do_time_average) then
++          do i = 1, 3
++             name_time_average = trim(avg_name)//trim(avg_subnames(i))
++             istat = NF90_INQ_VARID (ncid_in, trim(name_time_average), varid_tavg_in(i))
++             if (istat /= NF90_NOERR) call error_handler (ncode=istat)
++             call copy_variable ( ncid_in, trim(name_time_average), ncid_out,    &
++                                  (/dimids_mass(5)/), varid_tavg_out(i) )
++          enddo
++       endif
++      endif
+ !-----------------------------------------------------------------------
+ ! ---- define compression parameters ----
+       if (new_var_deflation > 0) then
+@@ -662,8 +792,11 @@ endif
+           if (istat /= NF90_NOERR) call error_handler ('putting axis data for var='//trim(Axes(idim)%name_out), ncode=istat)
+           deallocate (axisdata)
+        enddo
+-        ! output pressure levels in millibars
+-          istat = NF90_PUT_VAR (ncid_out, varid_pout, pout(1:nlev_out)*0.01)
++        ! output pressure levels in millibars (hPa) 
++!         istat = NF90_PUT_VAR (ncid_out, varid_pout, pout(1:nlev_out)*0.01)
++!rjw     output pressure levels in Pa    Rervert back to default units of Pa 
++          istat = NF90_PUT_VAR (ncid_out, varid_pout, pout(1:nlev_out))
++
+           if (istat /= NF90_NOERR) call error_handler ('putting axis data for var='//trim(pres_name_out), ncode=istat)
+ 
+ !-----------------------------------------------------------------------
+@@ -678,7 +811,10 @@ endif
+           res = 1.0
+        endif
+        if (need_zsurf .or. do_zsurf) then
+-          call read_variable (ncid_in, Fields(index_zsurf), zsurf, start=start(1:2))
++!rjw          call read_variable (ncid_in, Fields(index_zsurf), zsurf, start=start(1:2))
++          call read_variable (ncid_topo, Fields(index_zsurf), zsurf, start=start(1:2))
++          print *, 'Max topo val: ',  Maxval( zsurf )
++
+        else
+           zsurf = 0.0
+        endif
+@@ -726,6 +862,7 @@ endif
+ !-----------------------------------------------------------------------
+ !-------------- interpolation setup ------------------------------------
+ 
++     if (.not.do_diurn) then
+      !---- surface pressure ----
+ 
+           start(1:3) = (/ is, js, itime /)
+@@ -759,6 +896,48 @@ endif
+                             is, js, itime, otime, Fields(i) )
+ 
+      enddo
++     else
++            !---- surface pressure ----
++      do itod = 1,ntod
++          istat =  NF90_GET_VAR (ncid_in, varid_tod_in, tod, start=(/itod/))
++          if (istat /= NF90_NOERR) call error_handler ('getting time coord value', &
++                                                       ncode=istat)
++
++          istat =  NF90_PUT_VAR (ncid_out, varid_tod_out, tod, start=(/itod/))
++          if (istat /= NF90_NOERR) call error_handler ('putting time coord value', &
++                                                       ncode=istat)
++          start(1:4) = (/ is, js, itod, itime /)
++          call read_variable2 (ncid_in, Fields(index_ps), psdiurn, start=start(1:4))
++          psdiurn(is:ie,js:je,1) = psdiurn(is:ie,js:je,1) * res
++
++!-----------------------------------------------------------------------
++!----------------- mass field interpolation ---------------------
++
++!     ---- interpolation initialization for mass fields ------
++
++     call interp_field_setup2 ( ncid_in, ncid_out, bk, pk,   &
++                               is, js, itime, otime, itod,        &
++                               psdiurn(is:ie,js:je,1),           &
++                               zsurf(:,:,1), pout(1:nlev_out) )
++!     ---- interpolation of mass fields ----
++
++     do i = 1, num_field_names
++        if ( Fields(i)%skip   )    cycle
++        if ( Fields(i)%static )    cycle
++        if ( Fields(i)%y_axis /= nlat ) cycle
++
++        kv = max(1,Fields(i)%z_axis)
++        if ( verbose > 1 ) then
++           print *, 'Interp field = ',trim(Fields(i)%name)
++        endif
++
++!     ---- interpolation of mass fields ----
++        call interp_field ( ncid_in, ncid_out, Interp(kv),  &
++                            is, js, itime, otime, Fields(i),itod )
++
++     enddo
++     enddo
++     endif
+ 
+ !     ---- free up allocated space ----
+                     call pres_interp_free (Interp(1))
+@@ -974,17 +1153,193 @@ contains
+ 
+ !#######################################################################
+ 
+-   subroutine interp_field ( ncid_in, ncid_out, Interp, is, js, itime, otime, Field )
++   subroutine interp_field_setup2 ( ncid_in, ncid_out, bk, pk, &
++                                   is, js, itime, otime, itod, ps,  &
++                                   zsurf, pout )
++
++   integer, intent(in) :: ncid_in, ncid_out
++   real,    intent(in) :: bk(:), pk(:)
++   integer, intent(in) :: is, js, itime, otime, itod
++   real   , intent(in) :: ps(:,:), zsurf(:,:), pout(:)
++
++ real, dimension(size(ps,1),size(ps,2),size(bk(:))-1) :: &
++            temp_in, sphum_in, mask_in, pfull, hght_in
++ real, dimension(size(ps,1),size(ps,2),size(bk(:)))   :: phalf
++ real, dimension(size(ps,1),size(ps,2),size(pout)) ::  &
++                         temp_out, hght_out, sphum_out
++ real   , dimension(size(ps,1),size(ps,2)) :: zbot, tbot, pbot, slp
++ integer, dimension(size(ps,1),size(ps,2)) :: kbot
++   character(len=NF90_MAX_NAME) :: name
++   integer :: start(5), kount(5), ndim, ivar, nlev, kb, kr, i, j, k
++   real    :: sig
++
++
++      do k = 1, size(bk(:))
++         phalf(:,:,k) = pk(k) + bk(k)*ps(:,:)
++      enddo
++      call compute_pres_full (pk, bk, phalf, pfull)
++
++  !---- read in temperature data ----
++   if (do_temp .or. need_temp) then
++       start = (/ is, js, 1, itod, itime /)
++       call read_variable2 (ncid_in, Fields(index_temp), temp_in, start)
++      !---- mask ----
++       call set_up_input_mask (ncid_in, Fields(index_temp), temp_in, mask_in, kbot)
++   endif
++
++  !---- read in specific humidity data ----
++   if (do_sphum .or. need_sphum) then
++       if (sphum_present) then
++           start = (/ is, js, 1, itod, itime /)
++           call read_variable2 (ncid_in, Fields(index_sphum), sphum_in, start)
++          !---- mask ----
++           if (.not.do_temp) &
++           call set_up_input_mask (ncid_in, Fields(index_sphum), sphum_in, mask_in, kbot)
++       else
++           sphum_in = 0.0
++       endif
++   endif
++
++  !---- interpolation setup for standard full pressure levels -----
++   if (do_hght) then
++       if ( verbose > 1 ) print *, 'Computing field = hght'
++      !---- geopotential height (in meters) -----
++       call compute_height ( zsurf, temp_in, sphum_in, pfull, phalf, hght_in, mask_in)
++      !---- interpolate temp, sphum, hght ----
++       if ( verbose > 1 ) then
++           print *, 'Interp field = ',trim(Fields(index_temp)%name)
++           print *, 'Interp field = ',trim(Fields(index_sphum)%name)
++       endif
++       Interp(1) = pres_interp_init ( pfull, pout, kbot,   &
++                                      tin=temp_in,  tout=temp_out,  &
++                                      zin=hght_in,  zout=hght_out,  &
++                                      qin=sphum_in, qout=sphum_out, &
++                                      use_extrap=.not.mask_extrap   )
++   else if ((do_temp.and.do_sphum).and.(.not.do_hght)) then
++       if ( verbose > 1 ) then
++           print *, 'Interp field = ',trim(Fields(index_temp)%name)
++           print *, 'Interp field = ',trim(Fields(index_sphum)%name)
++       endif
++      !---- interpolate temp, sphum ----
++       Interp(1) = pres_interp_init ( pfull, pout, kbot,   &
++                                      tin=temp_in,  tout=temp_out,  &
++                                      qin=sphum_in, qout=sphum_out, &
++                                      use_extrap=.not.mask_extrap   )
++   else if ((do_temp).and.(.not.do_hght)) then
++       if ( verbose > 1 ) print *, 'Interp field = ',trim(Fields(index_temp)%name)
++      !---- interpolate temp ----
++       Interp(1) = pres_interp_init ( pfull, pout, kbot,   &
++                                      tin=temp_in,  tout=temp_out,  &
++                                      use_extrap=.not.mask_extrap   )
++   else if ((do_sphum).and.(.not.do_hght)) then
++       if ( verbose > 1 ) print *, 'Interp field = ',trim(Fields(index_sphum)%name)
++      !---- interpolate sphum ----
++       Interp(1) = pres_interp_init ( pfull, pout, kbot,   &
++                                      qin=sphum_in, qout=sphum_out, &
++                                      use_extrap=.not.mask_extrap   )
++   else
++      !---- initialize only (need kbot) ----
++       start = (/ is, js, 1, itod, itime /)
++       call read_and_set_up_mask2 (ncid_in, start, mask_in, kbot)
++       Interp(1) = pres_interp_init ( pfull, pout, kbot,   &
++                                      use_extrap=.not.mask_extrap   )
++   endif
++   
++  !---- interpolation setup for standard full pressure levels -----
++   if (do_phalf) then
++       Interp(2) = pres_interp_init ( phalf, pout, kbot )
++   endif
++
++! ---- write out data ----
++
++     !start = (/ is, js,  1, otime /)
++      start = (/  1,  1,  1, itod, otime /)
++
++!     ---- temperature ----
++
++   if (do_temp) then
++      if ( verbose > 1 ) print *, 'Writing field = ',trim(Fields(index_temp)%name)
++      if (Fields(index_temp)%do_miss_out) then
++          call mask_data (Fields(index_temp)%unpkd_missval_out, Interp(1)%mask, temp_out)
++      endif
++      call write_variable2 (ncid_out, Fields(index_temp), temp_out, start)
++   endif
++   print*,'temp field written successfully'
++
++!        ---- specific humidity ----
++
++   if (do_sphum) then
++      if ( verbose > 1 ) print *, 'Writing field = ',trim(Fields(index_sphum)%name)
++      if (Fields(index_sphum)%do_miss_out) then
++          call mask_data (Fields(index_sphum)%unpkd_missval_out, Interp(1)%mask, sphum_out)
++      endif
++      call write_variable (ncid_out, Fields(index_sphum), sphum_out, start)
++   endif
++
++!        ---- height ----
++
++   if (do_hght) then
++      if ( verbose > 1 ) print *, 'Writing field = hght'
++      call mask_data (mval_hght, Interp(1)%mask, hght_out)
++      istat = NF90_PUT_VAR (ncid_out, varid_hght_out, hght_out, start)
++      if (istat /= NF90_NOERR) call error_handler ('putting hght data', ncode=istat)
++   endif
++
++!        ---- sea level pressure ----
++
++   if (do_slp) then
++     if ( verbose > 1 ) print *, 'Computing field = slp'
++     do j = 1, size(ps,2)
++     do i = 1, size(ps,1)
++        kb = kbot(i,j)
++        pbot(i,j) = phalf(i,j,kb+1)
++
++        if ( abs(zsurf(i,j)) > 0.0001 ) then
++
++!            ---- get ref level for temp (as in spectral model) ----
++             do k = 1, kb
++                sig = pfull(i,j,k)/pbot(i,j)
++                if ( sig > 0.8 ) then
++                     kr = k
++                     exit
++                endif
++             enddo
++
++            !zbot(i,j) = zhalf(i,j,kb+1)
++!!!          tbot(i,j) = tref - tlapse*zbot(i,j)           ! original
++             tbot(i,j) = temp_in(i,j,kr) * sig ** mrgog    ! spectral
++             slp(i,j) = 0.01 * pbot(i,j) *  &
++                       ( 1.0 + tlapse * zsurf(i,j) / tbot(i,j) ) ** gorg
++                      !( 1.0 + tlapse * zbot(i,j) / tbot(i,j) ) ** gorg
++        else
++             slp(i,j) = pbot(i,j) * 0.01
++        endif
++     enddo
++     enddo
++
++     if ( verbose > 1 ) print *, 'Writing field = slp'
++     start(1:4) = (/ is, js, itod, otime /)
++     istat = NF90_PUT_VAR (ncid_out, varid_slp_out, slp, start(1:4))
++     if (istat /= NF90_NOERR) call error_handler ('putting slp data', ncode=istat)
++   endif
++
++
++   end subroutine interp_field_setup2
++
++!#######################################################################
++
++   subroutine interp_field ( ncid_in, ncid_out, Interp, is, js, itime, otime, Field, itodarg )
+ 
+    integer               , intent(in) :: ncid_in, ncid_out
+    type(pres_interp_type), intent(in) :: Interp
+    integer               , intent(in) :: is, js, itime, otime
+    type(field_type)      , intent(in) :: Field
++   integer, intent(in), optional :: itodarg
+ 
+    real, dimension(Interp%nx,Interp%ny,Interp%kx) :: data_in
+    real, dimension(Interp%nx,Interp%ny,Interp%nz) :: data_out
+ 
+-   integer :: start_in(4), start_out(4), istat
++   integer :: start_in(5), start_out(5), istat, itod
+ 
+ !     ---- skip fields have been processed in the initialization routine
+        if (trim(Field%name) == trim(temp_name))  return
+@@ -1008,21 +1363,47 @@ contains
+ 
+ 
+ !  ------ 2-d or 3-d data allowed -----
++ if (present(itodarg)) then
++   itod=itodarg
++ else
++   itod=0
++ endif
+ 
+  select case ( Field%ndim )
+ 
+-   case (4)
++   case (5)
++     start_in(4)=itod
++     start_out(4)=itod
+ !     ---- check vert axis length ----
+      if ( Field%dimlen(3) /= Interp%kx ) print *, trim(Field%name)
+      if ( Field%dimlen(3) /= Interp%kx ) call error_handler (    &
+                 'vertical coordinate resolution inconsistent')
+-     call read_variable (ncid_in, Field, data_in, start_in(1:4))
++     call read_variable2 (ncid_in, Field, data_in, start_in(1:5))
+ !    ---- interpolation ----
+      call pres_interp (Interp, data_in, data_out)
+      if (Field%do_miss_out) &
+      call mask_data (Field%unpkd_missval_out, Interp%mask, data_out)
+ !    ---- write out data ----
+-     call write_variable (ncid_out, Field, data_out, start_out(1:4))
++     call write_variable2 (ncid_out, Field, data_out, start_out(1:5))
++   case (4)
++     if (itod .gt. 0) then
++       start_in(3)=itod
++       start_out(3)=itod
++       call read_variable2 (ncid_in, Field, data_in(:,:,itod:1), start_in(1:4))
++       call write_variable2 (ncid_out, Field, data_in(:,:,itod:1), start_out(1:4))
++     else
++!     ---- check vert axis length ----
++       if ( Field%dimlen(3) /= Interp%kx ) print *, trim(Field%name)
++       if ( Field%dimlen(3) /= Interp%kx ) call error_handler (    &
++                'vertical coordinate resolution inconsistent')
++       call read_variable (ncid_in, Field, data_in, start_in(1:4))
++!    ---- interpolation ----
++       call pres_interp (Interp, data_in, data_out)
++       if (Field%do_miss_out) &
++       call mask_data (Field%unpkd_missval_out, Interp%mask, data_out)
++!    ---- write out data ----
++       call write_variable (ncid_out, Field, data_out, start_out(1:4))
++     endif
+ 
+    case (3)
+      call read_variable (ncid_in, Field, data_in(:,:,1:1), start_in(1:3))
+@@ -1053,11 +1434,12 @@ contains
+ 
+ !#######################################################################
+ 
+- subroutine check_fields ( ncid )
++ subroutine check_fields ( ncid, ncid_aux, ncid_topo)
+ 
+-   integer, intent(in) :: ncid
++   integer, intent(in) :: ncid, ncid_aux
++   integer, intent(out) :: ncid_topo
+ 
+-   integer :: id(6), ierr, iwarn, i
++   integer :: id(6), ierr, iwarn, i, icheck, icheck2
+    integer :: avg(6), istat(6)
+    character(len=NF90_MAX_NAME), dimension(6) :: names
+ 
+@@ -1072,7 +1454,37 @@ contains
+      id = 0
+ 
+    ! get variable index for all important fields
+-     do i = 1, 6
++
++!!!     do i = 1, 6
++!!!       istat(i) = NF90_INQ_VARID (ncid, trim(names(i)), id(i))
++!!!     enddo
++
++     do i = 1, 2
++       istat(i) = NF90_INQ_VARID (ncid_aux, trim(names(i)), id(i))
++     enddo
++
++!       Check for topography file
++     do i = 3,3
++       icheck = NF90_INQ_VARID (ncid, trim(names(i)), id(i))
++       if (icheck == NF90_NOERR) then
++           print *, 'Found  zsurf field in the input data set ' 
++           ncid_topo= ncid
++           istat(i)= icheck
++
++       else
++           icheck2 = NF90_INQ_VARID (ncid_aux, trim(names(i)), id(i))
++           ncid_topo= ncid_aux
++           if (icheck2 /= NF90_NOERR) then
++             print *, 'WARNING: required field does not exist: ',trim(names(i))
++              iwarn = 1 
++           else
++              print *, 'Found zsurf in the auxilliary data set '      
++           endif 
++          istat(i)= icheck2
++        endif
++     enddo
++
++     do i = 4, 6
+        istat(i) = NF90_INQ_VARID (ncid, trim(names(i)), id(i))
+      enddo
+ 
+@@ -1178,9 +1590,10 @@ contains
+ 
+ !#######################################################################
+ 
+- subroutine set_all_field_names ( ncid, field_names, num_field_names )
++ subroutine set_all_field_names ( ncid, do_diurn, field_names, num_field_names )
+ 
+    integer,          intent(in)    :: ncid
++   logical,          intent(in)    :: do_diurn
+    character(len=*), intent(inout) :: field_names(:)
+    integer,          intent(inout) :: num_field_names
+ 
+@@ -1212,16 +1625,29 @@ contains
+         if ( trim(name) == 'res') cycle    ! for eta coordinate
+ 
+ !     ---- must be 2-d, 3-d, or 4-d field ----
+-        static = dimids(ndim) .ne. rdim
+-        threed = .false.
++        if (.not. do_diurn) then
++           static = dimids(ndim) .ne. rdim
++           threed = .false.
++        else
++           static = dimids(ndim) .le. rdim-2
++           threed = .false.
++        endif
+ !!!del  if (static) cycle   ! will not allow static for now (see below)
+ 
+ !     ---- skip 3-d fields if flag set ----
+ 
+         select case (ndim)
++	  case (5)
++	    if (static) cycle
++	    threed = .true.
+           case (4)
+-            if (static) cycle   ! not possible
+-            threed = .true. 
++	    if (.not.do_diurn) then
++              if (static) cycle   ! not possible
++              threed = .true. 
++	    else
++	      if (static) threed =.true.
++	      if (.not.static .and. .not.do_all_fields) cycle
++	    endif
+           case (3)
+            !if (.not.static .and. do_all_3d_fields) cycle
+             if (static) threed = .true.
+@@ -1237,7 +1663,7 @@ contains
+ !     ---- axes must have correct size ----
+         if (axlen(1) /= nlon .or.  axlen(2) /= nlat)   cycle
+         if (threed) then
+-        if (axlen(3) /= nlev .and. axlen(3) /= nlev+1) cycle
++           if (axlen(3) /= nlev .and. axlen(3) /= nlev+1) cycle
+         endif
+ 
+ !     ---- output this field ----
+@@ -1358,6 +1784,11 @@ contains
+      ! NOTE: conversion of missing value data type to default real type
+        imiss = NF90_GET_ATT (ncid_in, Field%varid_in, 'missing_value', mval)
+        ifill = NF90_GET_ATT (ncid_in, Field%varid_in, '_FillValue',    fval)
++
++       print *, 'Input missing value: ', imiss, mval
++       print *, 'Input missing value: ', ifill, fval
++       print *, 'NF90_NOERR:  ',  NF90_NOERR
++
+        if (imiss == NF90_NOERR) then
+           Field%do_miss_in = .true.
+           Field%missval_in = mval
+@@ -1365,8 +1796,12 @@ contains
+           Field%do_miss_in = .true.
+           Field%missval_in = fval
+        else
+-          Field%do_miss_in = .false.
+-          Field%missval_in = 0.
++!rjw          Field%do_miss_in = .false.
++!rjw          Field%missval_in = 0.
++          mval= -1.e10
++          fval= -1.e10
++          Field%do_miss_in = .true.
++          Field%missval_in = mval
+        endif
+ 
+      ! unpack input missing value (for comparison with unpacked data)
+@@ -1386,10 +1821,10 @@ contains
+    character(len=NF90_MAX_NAME), intent(in)    :: name
+    integer          ,       intent(in)    :: ncid_in, ncid_out
+    type(field_type) ,       intent(inout) :: Field
+-   logical :: answer
++   logical :: answer,diurn
+    integer :: rdim, zcoord, idim
+    integer :: i, istat, ipack, ioffs, imiss, ifill
+-   integer :: dimids(4)
++   integer :: dimids(5)
+    real    :: mval, fval
+ 
+    call get_input_variable_info ( name, ncid_in, Field )
+@@ -1430,11 +1865,12 @@ contains
+    ! set dimension identifiers for output file
+ 
+      if (Field%dimlen(2) == nlat)   dimids = dimids_mass
++     diurn = dimids(5).gt.0
+ 
+    !---- copy input variable metadata to output file ----
+ 
+      select case (Field%ndim)
+-       case (4)
++       case (5)
+             if (Field%dimlen(3) == nlev)   zcoord = 1
+             if (Field%dimlen(3) == nlev+1) zcoord = 2
+             if (zcoord == 0) return
+@@ -1442,6 +1878,36 @@ contains
+             call copy_variable ( ncid_in, trim(name), ncid_out, &
+                                  dimids, Field%varid_out,       &
+                                  missvalue=Field%missval_out  )
++       case (4)
++          if (diurn) then
++            if (Field%static) then
++               if (Field%dimlen(3) == nlev)   zcoord = 1
++               if (Field%dimlen(3) == nlev+1) zcoord = 2
++               if (zcoord == 0) return
++               return   ! 4d static fields not allowed
++               call copy_variable ( ncid_in, trim(name), ncid_out, &
++                                 dimids(1:4), Field%varid_out,       &
++                                 missvalue=Field%missval_out  )
++             else
++               !---- 2d non-static field ----
++                if (Field%do_miss_in) then
++                   call copy_variable ( ncid_in, trim(name), ncid_out,      &
++                      (/dimids(1),dimids(2),dimids(4),dimids(5)/), Field%varid_out,&
++                      missvalue=Field%missval_out )
++                else
++                   call copy_variable ( ncid_in, trim(name), ncid_out,      &
++                      (/dimids(1),dimids(2),dimids(4),dimids(5)/), Field%varid_out )
++                endif
++             endif
++          else
++            if (Field%dimlen(3) == nlev)   zcoord = 1
++            if (Field%dimlen(3) == nlev+1) zcoord = 2
++            if (zcoord == 0) return
++            if (Field%static) return   ! 4d static fields not allowed
++            call copy_variable ( ncid_in, trim(name), ncid_out, &
++                                 dimids(1:4), Field%varid_out,       &
++                                 missvalue=Field%missval_out  )
++          endif
+        case (3)
+           if (Field%static) then
+             if (Field%dimlen(3) == nlev)   zcoord = 1
+@@ -1604,6 +2070,56 @@ contains
+      endif
+ 
+  end subroutine read_and_set_up_mask
++ 
++ !#######################################################################
++
++ subroutine read_and_set_up_mask2 (ncid, start, mask, kbot)
++
++   integer,           intent(in)  :: ncid, start(5)
++   real,              intent(out) :: mask(:,:,:)
++   integer,           intent(out) :: kbot(:,:)
++
++   character(len=NF90_MAX_NAME) :: name
++   real,  dimension(size(mask,1),size(mask,2),size(mask,3)) :: values
++   integer :: ivar, nvar, istat
++   logical :: done
++   type(field_type) :: Field
++
++     done = .false.
++
++   ! get number of variables and time axis id
++     istat = NF90_INQUIRE (ncid, nvariables=nvar)
++     if (istat /= NF90_NOERR) call error_handler (ncode=istat)
++
++     do ivar = 1, nvar
++        istat = NF90_INQUIRE_VARIABLE ( ncid, ivar, name=name )
++        if (istat /= NF90_NOERR) call error_handler (ncode=istat)
++        call get_input_variable_info ( name, ncid, Field )
++
++      ! find first 3d mass field
++        if (Field%ndim <= 2) cycle
++        if (Field%ndim <= 3 .and. .not.Field%static) cycle
++        if (Field%ndim == 4 .and.      Field%static) cycle
++
++      ! must have mass dimension lengths and full vertical levels
++        if (Field%dimlen(1) /= nlon .or. Field%dimlen(2) /= nlat .or. Field%dimlen(3) /= nlev) cycle
++
++      ! must have input missing value
++        if (.not.Field%do_miss_in) cycle
++
++        call read_variable2     (ncid, Field, values, start )
++        call set_up_input_mask (ncid, Field, values, mask, kbot)
++        done = .true.
++        exit
++
++     enddo
++
++     if (.not.done) then
++        mask = 1.0
++        kbot = nlev
++     endif
++
++ end subroutine read_and_set_up_mask2
+ 
+ !#######################################################################
+ 
+@@ -1674,6 +2190,59 @@ contains
+ 
+  end subroutine read_variable
+ 
++!#######################################################################
++
++ subroutine read_variable2 ( ncid, Field, values, start )
++ integer,           intent(in)  :: ncid
++ type(field_type),  intent(in)  :: Field
++ real,              intent(out) :: values(:,:,:)
++ integer, optional, intent(in)  :: start(:)
++
++ integer :: ndim, nd, begin(5)
++
++ ! number of dimensions (less the time dimension)
++   ndim = Field%ndim
++   if (.not.Field%static) ndim = ndim-2
++
++ ! start indices
++   nd    = Field%ndim
++   begin = 1
++   if (present(start)) then
++       nd = size(start)
++       begin(1:nd) = start
++   endif
++
++
++   select case (ndim)
++      case(1)
++          istat = NF90_GET_VAR (ncid, Field%varid_in, values(:,1,1), start=begin(1:nd))
++          if (istat /= NF90_NOERR) call error_handler ('getting 1d var='//trim(Field%name), ncode=istat)
++      case(2)
++          istat = NF90_GET_VAR (ncid, Field%varid_in, values(:,:,1), start=begin(1:nd))
++          if (istat /= NF90_NOERR) call error_handler ('getting 2d var='//trim(Field%name), ncode=istat)
++      case(3)
++          istat = NF90_GET_VAR (ncid, Field%varid_in, values(:,:,:), start=begin(1:nd))
++          if (istat /= NF90_NOERR) call error_handler ('in rv2: getting 3d var='//trim(Field%name), ncode=istat)
++      case default
++          call error_handler ('invalid number of dimensions in read_variable, var='//trim(Field%name))
++   end select
++
++ ! unpack values
++   if (Field%do_pack) then
++       if (Field%do_miss_in) then
++           where (values .ne. Field%missval_in)
++                 values = values*Field%pack(1) + Field%pack(2)
++           elsewhere
++                 values = Field%unpkd_missval_in
++           endwhere
++       else
++           values = values*Field%pack(1) + Field%pack(2)
++       endif
++   endif
++
++ end subroutine read_variable2
++
++
+ !#######################################################################
+ 
+  subroutine write_variable ( ncid, Field, values, start )
+@@ -1725,6 +2294,61 @@ contains
+ 
+  end subroutine write_variable
+ 
++!#######################################################################
++
++ subroutine write_variable2 ( ncid, Field, values, start )
++ integer,           intent(in)    :: ncid
++ type(field_type),  intent(in)    :: Field
++ real,              intent(inout) :: values(:,:,:)
++ integer, optional, intent(in)    :: start(:)
++
++ integer :: ndim, nd, begin(5)
++
++ ! pack values (overwrite input data)
++   if (Field%do_pack) then
++       if (Field%do_miss_out) then
++           where (values .ne. Field%unpkd_missval_out)
++               values = nint((values-Field%pack(2))/Field%pack(1))
++           elsewhere
++               values = Field%missval_out
++           endwhere
++       else
++           values = nint((values-Field%pack(2))/Field%pack(1))
++       endif
++   endif
++
++ ! number of dimensions (less the time dimension)
++   ndim = Field%ndim
++   if (.not.Field%static) ndim = ndim-2
++
++ ! start indices
++   nd    = Field%ndim
++   begin = 1
++   if (present(start)) then
++       nd = size(start)
++       begin(1:nd) = start
++   endif
++
++!   print*,'begin in write_var2 = ',begin(1:nd)
++!   print*,'varid_in = ',Field%varid_in,'varid_out = ',Field%varid_out
++!   print*,'var name = ',Field%name
++!   print*,'var dims = ',Field%dimids(1:nd)
++
++   select case (ndim)
++      case(1)
++          istat = NF90_PUT_VAR (ncid, Field%varid_out, values(:,1,1), start=begin(1:nd))
++          if (istat /= NF90_NOERR) call error_handler ('putting 1d var='//trim(Field%name), ncode=istat)
++      case(2)
++          istat = NF90_PUT_VAR (ncid, Field%varid_out, values(:,:,1), start=begin(1:nd))
++          if (istat /= NF90_NOERR) call error_handler ('putting 2d var='//trim(Field%name), ncode=istat)
++      case(3)
++          istat = NF90_PUT_VAR (ncid, Field%varid_out, values(:,:,:), start=begin(1:nd))
++          if (istat /= NF90_NOERR) call error_handler ('putting 3d var='//trim(Field%name), ncode=istat)
++      case default
++          call error_handler ('invalid number of dimensions in write_variable2, var='//trim(Field%name)//', ndim='//char(ndim))
++   end select
++
++ end subroutine write_variable2
+ !#######################################################################
+ 
+  subroutine compute_pres_full (pk, bk, ph, pf)
