@@ -25,7 +25,7 @@ echo "Datadir =" $datadir
 
 set platform    = intel     # Your platform
 set TILE_LAYOUT = 3,4       # 6 * layout 1 * layout 2 <= total requested cpus (select*ncpus)
-set model_executable = $cwd/exec.$platform.am4/FMS_MARS.x           # Path to model
+set model_executable = $cwd/exec.$platform.mars3.0/FMS_MARS.x           # Path to model
 set homedir     = $cwd
 
 set NCX         = 24        # number of horizontal grid cells per cube face column or row
@@ -156,7 +156,7 @@ $name
 #                               -------     fixed     ----------
 #*********************************************************************************************
 "dynamics",     "bk",           "bk",           "fixed",        "all", .false.,      "none", 2,
-"dynamics",     "pk",           "pk",           "fixed",        "all", .false.,      "none", 2,
+"dynamics",     "pk",           "ak",           "fixed",        "all", .false.,      "none", 2,
 "dynamics",     "zsurf",        "zsurf",        "fixed",        "all", .false.,      "none", 2,
 "mars_surface", "thin0",        "thin",         "fixed",        "all", .false.,      "none", 2,
 "mars_surface", "alb0",         "alb",          "fixed",        "all", .false.,      "none", 2,
@@ -166,7 +166,7 @@ $name
 #                               -------  atmos_average  ----------
 #*********************************************************************************************
 "dynamics",     "bk",           "bk",           "atmos_average", "all", .true.,      "none", 2,
-"dynamics",     "pk",           "pk",           "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "pk",           "ak",           "atmos_average", "all", .true.,      "none", 2,
 "radiation",    "areo",         "areo",         "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "ucomp",        "ucomp",        "atmos_average", "all", .true.,      "none", 2,
@@ -186,7 +186,7 @@ $name
 #                               -------  atmos_daily  ----------
 #*********************************************************************************************
 "dynamics",     "bk",           "bk",           "atmos_daily",   "all", .false.,     "none", 2,
-"dynamics",     "pk",           "pk",           "atmos_daily",   "all", .false.,     "none", 2,
+"dynamics",     "pk",           "ak",           "atmos_daily",   "all", .false.,     "none", 2,
 "radiation",    "areo",         "areo",         "atmos_daily",   "all", .false.,     "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_daily",   "all", .false.,     "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_daily",   "all", .false.,     "none", 2,
@@ -194,7 +194,7 @@ $name
 #                               -------  atmos_diurn ----------
 #*********************************************************************************************
 "dynamics",     "bk",           "bk",           "atmos_diurn",   "all", "diurnal24", "none", 2,
-"dynamics",     "pk",           "pk",           "atmos_diurn",   "all", "diurnal24", "none", 2,
+"dynamics",     "pk",           "ak",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 "radiation",    "areo",         "areo",         "atmos_diurn",   "all", "diurnal24", "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 "mars_surface"  "ts",           "ts",           "atmos_diurn",   "all", "diurnal24", "none", 2,

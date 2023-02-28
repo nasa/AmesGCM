@@ -4,16 +4,16 @@
 #Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
 #script to apply AM4 patches for Ames Mars model
 
-cd ../../FMS && git checkout tags/2021.04 -b mars_branch && git apply --reject --whitespace=fix ../atmos_phys_mars/patches/srcFMS.patch
+cd ../../FMS && git checkout tags/2021.04 -b mars_branch && git apply --reject --whitespace=fix ../AmesGCM/patches/srcFMS.patch
 cd ../GFDL_atmos_cubed_sphere && git reset --hard 3ebecff
-git checkout -b mars_branch && git apply --reject --whitespace=fix ../atmos_phys_mars/patches/srcGFDL_acs.patch
-cd ../atmos_drivers && git checkout tags/2021.02 -b mars_branch && git apply --reject --whitespace=fix ../atmos_phys_mars/patches/srcatmos_drivers.patch
+git checkout -b mars_branch && git apply --reject --whitespace=fix ../AmesGCM/patches/srcGFDL_acs.patch
+cd ../atmos_drivers && git checkout tags/2021.02 -b mars_branch && git apply --reject --whitespace=fix ../AmesGCM/patches/srcatmos_drivers.patch
 cd ../FMScoupler && git checkout tags/2021.02 -b mars_branch
 cd ../MOM6 && git reset --hard 2e39f174b
 cd ../atmos_phys && git checkout tags/2021.02 -b mars_branch
 cd ../land_lad2 && git checkout tags/land_lad2_2021.02 -b mars_branch
 cd ../ocean_shared && git reset --hard e113821
-cd ../atmos_phys_mars
+cd ../AmesGCM
 cp -r build_run/bin ../../
 cp build_run/compile.archives ../../exec
 cp build_run/diag_table.ext ../../exec
