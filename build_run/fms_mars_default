@@ -20,7 +20,7 @@ set name        = fms_mars_default
 set scriptname  = $cwd/$name
 set classdir    = am4_mars_runs
 set workdir     = /nobackup/$USER/FMS_MARS_runs/$classdir/$name     # Where model is run, output stored
-set datadir     = $cwd/../src/atmos_phys_mars/data                  # The data dir
+set datadir     = $cwd/../src/AmesGCM/data                  # The data dir
 echo "Datadir =" $datadir
 
 set platform    = intel     # Your platform

@@ -8,7 +8,7 @@ set mkmf      = $cwd/../src/mkmf/bin/mkmf                        # path to execu
 set sourcedir = $cwd/../src                             # path to directory containing model source code
 set src_share = $cwd/../src/FMS
 set src_fv3   = $cwd/../src/GFDL_atmos_cubed_sphere
-set src_mars  = $cwd/../src/atmos_phys_mars
+set src_mars  = $cwd/../src/AmesGCM
 set listpaths = $cwd/../src/mkmf/bin/list_paths
 
 setenv NETCDF "/nasa/netcdf/4.4.1.1_mpt"
@@ -161,7 +161,7 @@ popd
 mkdir -p $execdir/mars_atmos_phys
 
 /bin/rm -f $execdir/mars_atmos_phys/*.html
-$listpaths -o $execdir/mars_atmos_phys/pathnames_mars_atmos_phys $src_fv3/driver/mars/atmosphere.F90 $sourcedir/atmos_drivers/mars/atmos_model.F90 $sourcedir/atmos_phys_mars/atmos_cubed_sphere_mars/mars_physics_update.F90 $sourcedir/atmos_phys_mars/atmos_param_mars
+$listpaths -o $execdir/mars_atmos_phys/pathnames_mars_atmos_phys $src_fv3/driver/mars/atmosphere.F90 $sourcedir/atmos_drivers/mars/atmos_model.F90 $sourcedir/AmesGCM/atmos_cubed_sphere_mars/mars_physics_update.F90 $sourcedir/AmesGCM/atmos_param_mars
 
 
 pushd mars_atmos_phys
