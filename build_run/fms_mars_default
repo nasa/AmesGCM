@@ -474,7 +474,7 @@ set numdust = $#dust_scenarios
 set dscen   = 1
 
 if( $numdust == 0) then
-    set dust_scenarios  = ( Luca_dust_backgrnd_v5.nc )
+    set dust_scenarios  = ( DustScenario_Background.nc )
     echo "No dust scenario chosen, defaulting to background"
 endif
 
