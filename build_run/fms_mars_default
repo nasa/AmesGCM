@@ -342,10 +342,10 @@ cat > input.nml.unexpanded <<\EOF
 /
 
  &aerosol_nml
-    do_inpt_dust_cycle        = T,  ! Flag: Read dust scenario from an input file for lifting. Skipped if optical_depth_inpt <= 0
+    do_inpt_dust_cycle        = T,  ! Flag: Read dust scenario from an input file for lifting
     conrath_type              = 1,  ! Conrath vertical extent.
                                     !   0 = Conventional Conrath top
-                                    !   1 = Conrath with scaled ztop from dust scenario
+                                    !   1 = Conrath with scaled ztop
 /
 
 !**************************************************************************************************
