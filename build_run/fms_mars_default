@@ -425,7 +425,6 @@ cp $datadir/waterCoatedQ_Tbright_MK.dat         waterCoatedQ_Tbright_MK.dat
 
 #------ Copy hi-res topography, TI, albedo, and surface emissivity:
 cp $datadir/mars_topo_mola16.nc                 mars_topo.nc
-cp $datadir/input_file_nlte                     input_file_nlte
 cp $datadir/mars_thermal_inertia8_2011.nc       thermal_inertia.nc
 cp $datadir/mars_TES_albedo8_new.nc             albedo.nc
 ###  cp $datadir/mars_lmd_sfc_roughness8.nc     sfc             # 2 versions available
