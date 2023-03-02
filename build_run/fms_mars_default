@@ -370,6 +370,10 @@ cat > input.nml.unexpanded <<\EOF
         print_memory_usage    = .true.,     ! Prints memory usage stats to the fms.out file
 /
 
+ &diag_manager_nml
+        issue_oor_warnings    = F,
+/
+
  &test_case_nml
         test_case   = 11            !  Topography type. 11= Mars topo; 10= flat topo
 /
