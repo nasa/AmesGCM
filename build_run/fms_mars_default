@@ -413,7 +413,6 @@ set -r envFileDelay = 2
 cd $workdir/INPUT
 
 #------ Copy files for radiation:
-cp $datadir/tlw_mtl3b.bin.nc                    tlw_mtl3b.bin.nc
 cp $datadir/CO2H2O_* .
 cp $datadir/waterCoated_vis_* .
 cp $datadir/waterCoated_ir_* .
