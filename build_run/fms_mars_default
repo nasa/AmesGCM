@@ -570,7 +570,7 @@ end
 #------ Backup output to Lou (NAS only)
 pbs_release_nodes -j $PBS_JOBID -a
 ssh -q pfe "ssh -q lou mkdir -p $ASCII_DIR"
-ssh -q pfe "ssh -q lou scp -q $workdir/ascii/*.out  $ASCII_DIR/."
+ssh -q pfe "ssh -q lou scp -q $workdir/ascii/*  $ASCII_DIR/."
 ssh -q pfe "ssh -q lou mkdir -p $RESTART_DIR"
 ssh -q pfe "ssh -q lou scp -q $workdir/restart/*.restart.tar  $RESTART_DIR/."
 ssh -q pfe "ssh -q lou mkdir -p $HIST_DIR"

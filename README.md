@@ -1,16 +1,12 @@
 # NASA Ames Mars Global Climate Model
-## Description of the default simulation
-The Ames Mars GCM is released with **fms\_mars_default**, the default run script.  
-*    The default simulation has a horizontal simulation of 24x24 cells per cube face, or approximately 240x240 km grid cell size.  
-*    The vertical resolution is 30 vertical layers with a top at 0.02 Pa.  
-*    The surface albedo are derived from TES observations, with thermal inertia values derived to produce observed surface temperature diurnal cycles.  
-*    CO<sub>2</sub> is condensed at the surface when predicted temperatures fall below the condensation temperature. The condensed mass is removed from the atmosphere. Soil properties are tuned to produce observed annual pressure cycles from the Viking Landers. Atmospheric CO<sub>2</sub> is condensed when the temperature falls below the condensation temperature. Mass is removed from the layer where condensation occurred, then deposited on the surface.   
-*    For radiative heating purposes, the default simulation assumes a fixed dust distribution that matches a background dust scenario representing a minimum dust climatology over 10 Mars Years. The dust field assumes a modified Conrath profile in the vertical, scaled to a horizontally and temporally varying prescribed top level.
-*    Dust is lifted and advected as passive tracers of moment mass and number with a log-normal size distribution. Lifting is performed as an assimilation, reading the background dust scenario and lifting according to the column opacity deficit compared to the map. The dust scenario is a series of 2D lat-lon snapshots of column dust opacity, with a temporal resolution of 6 L<sub>s</sub>. After being lifted into the atmosphere, the dust is spread throughout the PBL and advected by the dynamical core.  
-*    Turbulence is calculated with a Mellor-Yamada level 2.0 turbulence closure scheme. Heat, momentum, and tracers are mixed in the boundary layer, and the top of the boundary layer is saved for calculating injection of dust and water vapor.  
-*    Radiatively inert clouds are formed assuming supersaturated water vapor is immediately condensed into solid ice. Ice is assumed to have a fixed number scaled by pressure.  
-*    The radiative heating uses a 12 band correlated-k radiative transfer scheme with a non-LTE correction to the visible heating.  
-*    A convective adjustment is iteratively applied from the surface to the top of the atmosphere to remove atmospheric instabilities.  
+## About the Model
+The NASA Ames Mars Global Climate Model (GCM) is developed and released by the Mars Climate Modeling Center (MCMC) at NASA's Ames Research Center. The GCM simulates the atmosphere and climate of the planet Mars using an external finite volume dynamical core to predict the global atmospheric state given various planetary parameters and physical parameters. This software package includes only the physical processes and patches to interface with the external model, as the dynamical core is a third party software package available on the [NOAA-GFDL repository](https://github.com/NOAA-GFDL/GFDL_atmos_cubed_sphere) developed by the Geophysical Fluid Dynamics Laboratory (GFDL) at the National Oceanic and Atmospheric Administration (NOAA).
+
+## User Guide
+A [user guide](docs/NASA_Ames_Mars_GCM_3_0_User_Guide.pdf) is included that describes the basic instructions for downloading, installing, and running the model. Also included are postprocessing instructions, brief descriptions of the physics, input files and namelist options, and some tips for troubleshooting.
+
+## More Information
+For additional information about the MCMC, please refer to our [website](https://www.nasa.gov/mars-climate-modeling-center-ames).
 
 ## License
 This software is released under the [NASA Open Source Agreement Version 1.3](NOSA.pdf).
