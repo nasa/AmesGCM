@@ -164,7 +164,7 @@ do i=1,ie
         enddo 
         tl(3) = tl(4)
 
-        polarcap = frost(i,j) .gt. 1.e-5
+        polarcap = frost(i,j) .gt. 1.e2
         sens_old = sens(i,j)
         evap_old = 0.d0      
         dsens_olda = dsens_datm(i,j)
