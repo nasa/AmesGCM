@@ -153,6 +153,8 @@ egrep -v "atmos_cubed_sphere/driver/GFDL/*"  pathnames.all  > pathnames_atmos_cu
 egrep -v "atmos_cubed_sphere/driver/SHiELD/*"  pathnames.all  > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
 egrep -v "*cmip*" pathnames.all > pathnames_atmos_cubed
+/bin/mv pathnames_atmos_cubed pathnames.all
+egrep -v "*fv_cmp*" pathnames.all > pathnames_atmos_cubed
 
 $mkmf -m Makefile -a $sourcedir -p lib_atmos_cubed.a -t $template -c "$cppDefs" -o "-I$execdir/fms" $execdir/atmos_cubed/pathnames_atmos_cubed $src_share/include $src_share/mpp/include $SLIST
 popd
