@@ -10,6 +10,6 @@ test -z "$CC" && CC=icc
 test -z "$FC" && FC=ifort
 
 # Compile/Link flags
-test -z "$FCFLAGS" && FCFLAGS="-fltconsistency -fno-alias -stack_temps -ftz -assume byterecl -i4 -traceback"
+test -z "$FCFLAGS" && FCFLAGS="-DMARS -fltconsistency -fno-alias -stack_temps -ftz -assume byterecl -i4 -traceback"
 
 test -z "$CFLAGS" && CFLAGS="-std=c11"
