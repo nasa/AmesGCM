@@ -3,7 +3,7 @@
 source /usr/share/modules/init/csh
 module purge
 module load comp-intel
-module load mpi-hpe/mpt.2.25
+module load mpi-hpe/mpt
 module load hdf4/4.2.12
 module load hdf5/1.8.18_mpt
 module load netcdf/4.4.1.1_mpt
