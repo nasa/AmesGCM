@@ -105,8 +105,8 @@ real :: incert_h2o2,incert_wat
 !-----------------------------------------------------------------------
 
 !! Choice tracer water and dust NDX
-nh2o   = find_field_index( MODEL_ATMOS, 'vap_mass_micro' )
-nice= find_field_index( MODEL_ATMOS, 'ice_mass_micro' )
+nh2o   = find_field_index( MODEL_ATMOS, 'vap_mass_mom' )
+nice= find_field_index( MODEL_ATMOS, 'ice_mass_mom' )
 nh2o2  = find_field_index( MODEL_ATMOS, 'h2o2_mmr_gas' )
 
 !! Choices index for surface water and H2O2 
@@ -180,10 +180,10 @@ REAL :: incert_dst,incert_wat
 !-----------------------------------------------------------------------
 
 !! Choice tracer water and dust NDX
-nh2o= find_field_index( MODEL_ATMOS, 'vap_mass_micro' )
-nice= find_field_index( MODEL_ATMOS, 'ice_mass_micro' )
-ncor= find_field_index( MODEL_ATMOS, 'cor_mass_micro' )
-ndst= find_field_index( MODEL_ATMOS, 'dst_mass_micro' )
+nh2o= find_field_index( MODEL_ATMOS, 'vap_mass_mom' )
+nice= find_field_index( MODEL_ATMOS, 'ice_mass_mom' )
+ncor= find_field_index( MODEL_ATMOS, 'cor_mass_mom' )
+ndst= find_field_index( MODEL_ATMOS, 'dst_mass_mom' )
 
 
 !! Choices index for surface water and dust NT

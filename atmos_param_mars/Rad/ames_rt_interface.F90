@@ -1,8 +1,8 @@
 module ames_rt_interface
 ! module to interface FV3 with legacy radiative transfer
-use rtmod_mgcm, only: ames_rt_driver, qextv, l_nrefv, l_nspecti
+use rtmod_mgcm, only: ames_rt_driver, qextv, l_nrefv, l_nspecti, scale_by_scon
 use field_manager_mod,  only: MODEL_ATMOS, parse, find_field_index
-use aerosol_util_mod, only: do_moment_micro
+use aerosol_util_mod, only: do_moment_dust
 use astronomy_mod, only: semi_major_axis
 
 implicit none
@@ -26,7 +26,7 @@ subroutine ames_rt(is,js,id,jd,kd,ntrace,p_half,p_full,             &
                taudust,taucloud,taudust_mom,                        &
                lw_heating_band,lw_15umHR,diag,tstrat_in,            &
                tstrat_dt,                                           &
-               taudust_reff,                                        &
+               taudust_reff,taudust_fix,                            &
                tbands          )
 
 ! main interface routine
@@ -69,7 +69,8 @@ real,intent(out), dimension(size(t,1),size(t,2),3) :: tbands            !     br
 !   Opacities TB18c
 real,intent(inout), dimension(size(t,1),size(t,2),2) :: taudust, &      ! total column dust opacity
                                                     taucloud, &     ! total column dust opacity
-                                                    taudust_mom     ! moment dust column dust opacity
+                                                    taudust_mom, &     ! moment dust column dust opacity
+                                                    taudust_fix     ! fixed dust column dust opacity
 real,intent(out), dimension(size(r,1),size(r,2),size(r,4),2) :: taudust_reff  ! moment column dust opacity by effective radius
 real, intent(in) :: rsolar, &        ! total solar constant from FV3
                     rorbit          ! Mars-Sun distance
@@ -125,21 +126,24 @@ flx_sfc = 0.
 taudust = 0.
 taucloud = 0.
 taudust_reff = 0.
+taudust_fix = 0.
 
 ! --Set no dust case --
 !       dustref = 0.
+if (scale_by_scon) then
+    rsdist = 1356.1/rsolar      !This is to scale the solar flux to the GFDL value so that SOL/rsdist = GFDL band-split solar
+else
+    rsdist = (semi_major_axis*rorbit)**2  !This is so that rsdist is exactly the mars-sun distance squared, as expected by the Ames RT
+endif
 
-rsdist = (semi_major_axis*rorbit)**2  !This is so that rsdist is exactly the mars-sun distance squared, as expected by the Ames RT
-!rsdist = 1356.1/rsolar      !This is to scale the solar flux to the GFDL value so that SOL/rsdist = GFDL band-split solar
-
-if (do_moment_micro) then
-    nh2o= find_field_index( MODEL_ATMOS, 'vap_mass_micro' )
-    nma_vap= find_field_index( MODEL_ATMOS, 'vap_mass_micro' )
-    nma_cld= find_field_index( MODEL_ATMOS, 'ice_mass_micro' )
-    nma_dst= find_field_index( MODEL_ATMOS, 'dst_mass_micro' )
-    nma_cor= find_field_index( MODEL_ATMOS, 'cor_mass_micro' )
-    nnb_dst= find_field_index( MODEL_ATMOS, 'dst_num_micro' )
-    nnb_cld= find_field_index( MODEL_ATMOS, 'ice_num_micro' )
+if (do_moment_dust) then
+    nh2o= find_field_index( MODEL_ATMOS, 'vap_mass_mom' )
+    nma_vap= find_field_index( MODEL_ATMOS, 'vap_mass_mom' )
+    nma_cld= find_field_index( MODEL_ATMOS, 'ice_mass_mom' )
+    nma_dst= find_field_index( MODEL_ATMOS, 'dst_mass_mom' )
+    nma_cor= find_field_index( MODEL_ATMOS, 'cor_mass_mom' )
+    nnb_dst= find_field_index( MODEL_ATMOS, 'dst_num_mom' )
+    nnb_cld= find_field_index( MODEL_ATMOS, 'ice_num_mom' )
 else
     nh2o= find_field_index( MODEL_ATMOS, 'h2o_vapor' )
 endif
@@ -215,6 +219,7 @@ do i=1,id
                    diag=diag,taurefd_out=dustref(i,j,:),            &
                    taurefc_out=cldref(i,j,:),                       &
                    taudust_momARG=taudust_mom(i,j,:),               &
+                   taudust_fixARG=taudust_fix(i,j,:),               &
                    tstrat_dt=tstrat_dt(i,j),                        &
                    taudust_reffARG=taudust_tmp(:,:),                &
                    tbands= tbands(i,j,:)                )

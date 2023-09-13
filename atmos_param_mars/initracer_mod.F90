@@ -22,7 +22,7 @@ integer, public, parameter :: nbin  = 4                  ! number of bin tracers
 integer, public, parameter :: naer  = 5                  ! number of moment tracers
 integer, public :: ndust_mass                            ! number of dust mass aerosols
 integer, public :: nice_mass                             ! number of ice mass aerosols
-integer, public :: ntrace_micro                          ! number of dust mass aerosols
+integer, public :: ntrace_mom                          ! number of dust mass aerosols
 integer, public :: ntrace_gas                            ! number of gas tracer ouside co2 (argon...)
 integer, public :: nt_nontag                             ! number of non tag tracers
 real*8, public, parameter :: dpden_dt = 2.5E+3, &        ! density of dust [kg/m^3]
@@ -61,12 +61,12 @@ integer, public, parameter :: nres_coag = 25
 real*8, public :: vrat_coag,rads_coag(nres_coag),vols_coag(nres_coag),deltar_coag(nres_coag)
 
 public :: initmicro
-public :: dust_mass_indx,dust_nb_indx,dust_cor_indx,micro_indx,gas_indx,sedim_indx
+public :: dust_mass_indx,dust_nb_indx,dust_cor_indx,mom_indx,gas_indx,sedim_indx
 public :: ice_mass_indx,ice_nb_indx,vapor_indx
 public :: reff_mom, tau_frac, qext_dt
 
 
-integer,  dimension(:),  allocatable  ::   dust_mass_indx,dust_nb_indx,dust_cor_indx,micro_indx,gas_indx,sedim_indx
+integer,  dimension(:),  allocatable  ::   dust_mass_indx,dust_nb_indx,dust_cor_indx,mom_indx,gas_indx,sedim_indx
 integer,  dimension(:),  allocatable  ::   ice_mass_indx,ice_nb_indx,vapor_indx
 real*8,   dimension(:),  allocatable  ::   stdv
 real*8,   dimension(:),  allocatable  ::   reff_mom, tau_frac
@@ -114,7 +114,7 @@ character (len=128) :: rtdata_path = 'INPUT/'
 real*8 factor
 
 integer ::  ntrace, ntprog, ntfam, ntdiag, ntdustmass, &
-            ntdustnb, ntmicro, ntdustcor, ntgas, ntreff
+            ntdustnb, ntmom, ntdustcor, ntgas, ntreff
 integer ::  nticemass, nticenb, ntvapor, flag, ndx
 character(len=128) :: scheme, params
 character (len=128) :: filename, fieldname, tracer_name
@@ -359,7 +359,7 @@ do n = 1, ntrace
 enddo ! ntrace
 
 ! c) Get total number of microphys tracers 
-ntrace_micro=3*ndust_mass+3*nice_mass
+ntrace_mom=3*ndust_mass+3*nice_mass
 
 ! d) Allocate table of microphysical tracers
 if ( ndust_mass > 0 ) then
@@ -367,9 +367,9 @@ if ( ndust_mass > 0 ) then
     allocate ( dust_mass_indx(ndust_mass) )
     allocate ( dust_nb_indx(ndust_mass) )
     allocate ( dust_cor_indx(ndust_mass) )
-    allocate ( micro_indx(ntrace_micro) )
-    allocate ( sedim_indx(ntrace_micro) )
-    allocate ( stdv(ntrace_micro) )
+    allocate ( mom_indx(ntrace_mom) )
+    allocate ( sedim_indx(ntrace_mom) )
+    allocate ( stdv(ntrace_mom) )
     allocate ( reff_mom(ntrace) )
     allocate ( tau_frac(ntrace) )
     allocate ( qext_dt(ntrace,2) )
@@ -398,7 +398,7 @@ ntdustcor= 0
 nticemass= 0
 nticenb= 0
 ntvapor= 0
-ntmicro= 0
+ntmom= 0
 ntgas= 0
 ntreff= 0
 
@@ -453,8 +453,8 @@ do n = 1, ntrace
         call get_tracer_names(MODEL_ATMOS, n, tracer_name)
 
         if( trim(scheme)== 'microphys' ) then
-            ntmicro= ntmicro + 1
-            micro_indx(ntmicro)= n 
+            ntmom= ntmom + 1
+            mom_indx(ntmom)= n 
             if(mcpu0)  print *, 'Setting micro index ',  trim(scheme) 
         endif
 
@@ -492,8 +492,8 @@ enddo ! ntrace
  
 ! g) Prints and security checks
 
-if(mcpu0)  print *, 'TB18 numbers',ntmicro,ntrace_micro,ntrace_gas
-if(mcpu0)  print *, 'TB18 micro_ind',micro_indx
+if(mcpu0)  print *, 'TB18 numbers',ntmom,ntrace_mom,ntrace_gas
+if(mcpu0)  print *, 'TB18 mom_ind',mom_indx
 if(mcpu0)  print *, 'TB18 gas_ind',gas_indx
 if(mcpu0)  print *, 'TB18 dust_mass_ind',dust_mass_indx
 if(mcpu0)  print *, 'TB18 dust_nb_ind',dust_nb_indx
@@ -512,32 +512,32 @@ if (mcpu0) then
         print *, 'stop number of tracer mass and cor/vapor different',ntdustmass,ntdustcor,nticemass,ntvapor
         stop 'in initracer'
     endif 
-    if (ntmicro.ne.ntrace_micro) then
-        print *, 'stop number of micro tracer different',ntmicro,ntrace_micro
+    if (ntmom.ne.ntrace_mom) then
+        print *, 'stop number of moment tracer different',ntmom,ntrace_mom
         stop 'in initracer'
     endif 
 endif
 
 ! h) TAGS : filling some important tables
 sedim_indx=0
-do n=1,ntrace_micro
+do n=1,ntrace_mom
     if (ndust_mass.gt.1) then
         do nt=2,ndust_mass
-            if (micro_indx(n).eq.dust_mass_indx(nt)) then
+            if (mom_indx(n).eq.dust_mass_indx(nt)) then
                 stdv(n) = stdv(iMa_dt)
-                if (micro_indx(n).gt.nt_nontag) then
+                if (mom_indx(n).gt.nt_nontag) then
                    sedim_indx(n) = find_tagging_index(dust_mass_indx(nt))
                 endif
             endif
-            if (micro_indx(n).eq.dust_nb_indx(nt)) then
+            if (mom_indx(n).eq.dust_nb_indx(nt)) then
                 stdv(n) = stdv(iNb_dt)
-                if (micro_indx(n).gt.nt_nontag) then
+                if (mom_indx(n).gt.nt_nontag) then
                     sedim_indx(n) = find_tagging_index(dust_nb_indx(nt))
                 endif
             endif
-            if (micro_indx(n).eq.dust_cor_indx(nt)) then
+            if (mom_indx(n).eq.dust_cor_indx(nt)) then
                 stdv(n) = stdv(iMa_cor)
-                if (micro_indx(n).gt.nt_nontag) then
+                if (mom_indx(n).gt.nt_nontag) then
                     sedim_indx(n) = find_tagging_index(dust_cor_indx(nt))
                 endif
             endif
@@ -545,19 +545,19 @@ do n=1,ntrace_micro
     endif
     if (nice_mass.gt.1) then
         do nt=2,nice_mass
-            if (micro_indx(n).eq.ice_mass_indx(nt)) then
+            if (mom_indx(n).eq.ice_mass_indx(nt)) then
                 stdv(n) = stdv(iMa_cld)
             endif
-            if (micro_indx(n).eq.ice_nb_indx(nt)) then
+            if (mom_indx(n).eq.ice_nb_indx(nt)) then
                 stdv(n) = stdv(iNb_cld)
             endif
         enddo
     endif
 enddo
 
-do nt = 1,ntrace_micro
+do nt = 1,ntrace_mom
     if (sedim_indx(nt).gt.0) then
-        sedim_indx(nt) = findloc(micro_indx,sedim_indx(nt),1) 
+        sedim_indx(nt) = findloc(mom_indx,sedim_indx(nt),1) 
     endif
 enddo
 if(mcpu0)  print *, 'sedimentation indexes are: ',sedim_indx

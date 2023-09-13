@@ -22,12 +22,14 @@ setenv INTEL_LICENSE_FILE "/nasa/intel/licenses/*.lic"
 ##include RELEASE for release version compile
 ##use optim = bridge for Sandy Bridge or Ivy Bridge processors
 ##use optim = well for Haswell or Broadwell processors
+##use optim = lake for Cascade Lake or Sky Lake processors
+##use optim = rome for Rome processors
 ##leave optim blank for generic processors
 set optim = ""
 set cppDefs = "-DMARS_GCM -DMARS_SURFACE -DRELEASE"
 
 #--------------------------------------------------------------------------------------------------------
-set execdir = $cwd/exec.$platform.mars3.0  # where code is compiled and executable is created
+set execdir = $cwd/exec.$platform.mars3.1  # where code is compiled and executable is created
 set execname = FMS_MARS.x
 set executable = $execdir/$execname
 
@@ -41,6 +43,10 @@ if ( "$optim" =~ *well ) then
 set template = $cwd/../bin/mkmf.template.$platform.avx
 else if ( "$optim" =~ *bridge ) then
 set template = $cwd/../bin/mkmf.template.$platform.avx2
+else if ( "$optim" =~ *lake ) then
+set template = $cwd/../bin/mkmf.template.$platform.lake
+else if ( "$optim" =~ *rome ) then
+set template = $cwd/../bin/mkmf.template.$platform.rome
 endif
 
 #--------------------------------------------------------------------------------------------------------
@@ -121,7 +127,7 @@ egrep -v "atmos_cubed_sphere/driver/SHiELD/*"  pathnames.all  > path_names
 mv path_names pathnames.all
 egrep -v "*/monin_obukhov/monin_obukhov*"  pathnames.all  > path_names
 
-$mkmf -a $sourcedir -t $template -p $executable:t -c "$cppDefs" $execdir/path_names $src_share/include $src_share/mpp/include /usr/local/include $SLIST
+$mkmf -a $sourcedir -t $template -p $executable:t -c "$cppDefs" $execdir/path_names $src_share/include $src_share/mpp/include /usr/local/include $SLIST 
 
 else
 
@@ -135,7 +141,7 @@ $listpaths -o $execdir/fms/pathnames_fms $src_share
 
 pushd fms
 
-$mkmf -m Makefile -a $sourcedir -p libfms.a -t $template -c "$cppDefs" $execdir/fms/pathnames_fms $src_share/include $src_share/mpp/include $SLIST
+$mkmf -m Makefile -a $sourcedir -p libfms.a -t $template -c "$cppDefs" $execdir/fms/pathnames_fms $src_share/include $src_share/mpp/include $SLIST 
 popd
 
 
@@ -153,10 +159,10 @@ egrep -v "atmos_cubed_sphere/driver/GFDL/*"  pathnames.all  > pathnames_atmos_cu
 egrep -v "atmos_cubed_sphere/driver/SHiELD/*"  pathnames.all  > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
 egrep -v "*cmip*" pathnames.all > pathnames_atmos_cubed
-/bin/mv pathnames_atmos_cubed pathnames.all
+/bin/mv path_names pathnames.all
 egrep -v "*fv_cmp*" pathnames.all > pathnames_atmos_cubed
 
-$mkmf -m Makefile -a $sourcedir -p lib_atmos_cubed.a -t $template -c "$cppDefs" -o "-I$execdir/fms" $execdir/atmos_cubed/pathnames_atmos_cubed $src_share/include $src_share/mpp/include $SLIST
+$mkmf -m Makefile -a $sourcedir -p lib_atmos_cubed.a -t $template -c "$cppDefs" -o "-I$execdir/fms" $execdir/atmos_cubed/pathnames_atmos_cubed $src_share/include $src_share/mpp/include $SLIST 
 popd
 
 
@@ -171,7 +177,7 @@ pushd mars_atmos_phys
 /bin/mv pathnames_mars_atmos_phys pathnames.all
 egrep -v "atmos_cubed_sphere/driver/solo/hswf*"  pathnames.all  > pathnames_mars_atmos_phys
 
-$mkmf -m Makefile -a $sourcedir -p libmars_atmos_phys.a -t $template -c "$cppDefs" -o "-I$execdir/fms -I$execdir/atmos_cubed" $execdir/mars_atmos_phys/pathnames_mars_atmos_phys $src_share/include $src_share/mpp/include $SLIST
+$mkmf -m Makefile -a $sourcedir -p libmars_atmos_phys.a -t $template -c "$cppDefs" -o "-I$execdir/fms -I$execdir/atmos_cubed" $execdir/mars_atmos_phys/pathnames_mars_atmos_phys $src_share/include $src_share/mpp/include $SLIST 
 popd
 
 

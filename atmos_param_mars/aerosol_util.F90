@@ -14,17 +14,18 @@ private
 public :: init_aerosol_flags
 public :: dust_map_scale, dust_map_scale_bin
 
-logical, public ::  do_moment_micro = .false.             ! do moment microphysics
-logical, public ::  do_moment_sedim = .false.             ! do moment sedimentation
+logical, public ::  do_moment_dust  = .true.             ! do moment dust lifting
+logical, public ::  do_moment_water = .false.            ! do moment water microphysics
+logical, public ::  do_moment_sedim = .true.             ! do moment sedimentation
 logical, public ::  do_15band = .false.
 real, public    ::  Reff_backgd = 2.0e-6                 !  effective radius for lifting in the case of background scenario
-real, public    ::  Reff_stress = 2.5e-6                 !  effective radius for stress lifting
-real, public    ::  Reff_dd = 2.5e-6                     !  effective radius for dust devils lifting
+real, public    ::  Reff_stress = 2.0e-6                 !  effective radius for stress lifting
+real, public    ::  Reff_dd = 2.0e-6                     !  effective radius for dust devils lifting
 real :: dust_map_scale = 3.67
 real :: dust_map_scale_bin = 3.67
 real, public    ::  Reff_fixed = 1.5e-6                  !  effective radius for fixed background dust
 
-namelist /aerosol_util_nml/  do_moment_micro, dust_map_scale, dust_map_scale_bin, &
+namelist /aerosol_util_nml/  do_moment_dust, do_moment_water, dust_map_scale, dust_map_scale_bin, &
                              Reff_backgd, Reff_stress, Reff_dd, do_moment_sedim, do_15band, &
                              Reff_fixed
 
@@ -50,6 +51,7 @@ endif
 
 if (mpp_pe() == mpp_root_pe()) write (stdlog(),nml=aerosol_util_nml)
 
+if (do_moment_water .and. .not. do_moment_dust) call error_mesg ('aerosol_util','moment water microphysics turned on without moment dust', FATAL)
 
 end subroutine init_aerosol_flags
 

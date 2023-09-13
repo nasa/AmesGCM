@@ -19,7 +19,7 @@ use   mpp_domains_mod, only: domain2d
 use        fms_io_mod, only: register_restart_field, restart_file_type, &
                              save_restart, restore_state, get_mosaic_tile_file
 
-use  aerosol_util_mod, only: do_moment_micro
+use  aerosol_util_mod, only: do_moment_water
 
 use  time_manager_mod, only: time_type, get_time
 
@@ -34,22 +34,8 @@ implicit none
 !---------- interfaces ------------
 
 public :: mars_surface_init, mars_surface_end,  progts, sfc_snow, sfc_frost, &
-         sfc_frost_micro, sfc_h2o2_chem, id_sfc_h2o2_chem
+         sfc_frost_mom, sfc_h2o2_chem, id_sfc_h2o2_chem
 
-!-----------------------------------------------------------------------
-!-------------------- namelist -----------------------------------------
-
-namelist /surface_data_nml/  zoland, drag_cnst, soil_ti, soil_temp, &
-                            do_co2_condensation,                    &
-                            do_subsfc_ice, subsfc_ice_case,         &
-                            albedo_ice_np, albedo_ice_sp,           &
-                            emiss_ice_np, emiss_ice_sp,             &
-                            np_cap_ti, np_cap_lat, frost_threshold, &
-                            np_cap_ti_max, soil_alb,  &
-                            edit_subsfc_temp, rescale_sh_ti,        &
-                            nlayers,do_waterice_albedo,use_legacy_soil, &
-                            alpha, albedo_h2o, emiss_h2o,nlay_rst,d2is, &
-                            gk1,gk2,use_equilibrated_ts
 
 integer :: nlayers = 16                 !  number of soil layers
 integer :: nlay_rst = 0                 !  number of soil layers in restart
@@ -110,7 +96,7 @@ real, dimension(:,:),     allocatable, save  ::  sfc_albedo             !  map o
 real, dimension(:,:),     allocatable, save  ::  sfc_emiss              !  map of surface emissivity
 real, dimension(:,:),     allocatable, save  ::  sfc_snow               !  (CO2)
 real, dimension(:,:,:),     allocatable, save  ::  sfc_frost            !  (water)
-real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_micro      !  (water)
+real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_mom      !  (water)
 real, dimension(:,:),     allocatable, save  ::  sfc_h2o2_chem          !  (h2o2)
 real, dimension(:,:),     allocatable, save  ::  sfc_roughness          !  map of surface roughness
 real, dimension(:,:),     allocatable, save  ::  sfc_topo               !  map of surface topography
@@ -142,12 +128,27 @@ character(len=12) :: mod_name = 'mars_surface'
 
 logical :: module_is_initialized = .false.
 
-integer, dimension(:),   allocatable, save  ::  id_frost_micro
+integer, dimension(:),   allocatable, save  ::  id_frost_mom
 integer  :: id_sfc_h2o2_chem
 integer  ::  id_zgrid, id_subsfc, id_ts, id_thin, id_frost, id_snow, id_sflux
 integer  ::  id_alb
 
 logical ::   mcpu0
+
+!-----------------------------------------------------------------------
+!-------------------- namelist -----------------------------------------
+
+namelist /surface_data_nml/  zoland, drag_cnst, soil_ti, soil_temp, &
+                            do_co2_condensation,                    &
+                            do_subsfc_ice, subsfc_ice_case,         &
+                            albedo_ice_np, albedo_ice_sp,           &
+                            emiss_ice_np, emiss_ice_sp,             &
+                            np_cap_ti, np_cap_lat, frost_threshold, &
+                            np_cap_ti_max, soil_alb,  &
+                            edit_subsfc_temp, rescale_sh_ti,        &
+                            nlayers,do_waterice_albedo,use_legacy_soil, &
+                            alpha, albedo_h2o, emiss_h2o,nlay_rst,d2is, &
+                            gk1,gk2,use_equilibrated_ts
 
 !-----------------------------------------------------------------------
 
@@ -177,7 +178,7 @@ real, dimension(13)  :: delzg_12 =                     &
                                            0.0400, 0.0800, 0.1600,  &
                                            0.3200, 0.640,  1.500, 3.50 /)
 
-character (len=128) :: filename, fieldname, tracer_name, tname, tracer_name2
+character (len=128) :: filename, fieldname, tracer_name, tname, tracer_name2, f_rst
 
 integer  ::  unit, io, ierr, id, jd, i, j, k, is, js, ie, je
 integer  ::  im, jm, km, days, fld_dims(4), nt, ndx
@@ -214,7 +215,7 @@ allocate (  sfc_emiss      (id,jd)  )
 allocate (  t_surf         (id,jd)  )
 allocate (  sfc_snow       (id,jd)  )
 allocate (  sfc_frost      (id,jd,1)  )
-allocate (  sfc_frost_micro      (id,jd,nice_mass)  )
+allocate (  sfc_frost_mom      (id,jd,nice_mass)  )
 allocate (  sfc_h2o2_chem  (id,jd)  )
 allocate (  sfc_roughness  (id,jd)  )
 allocate (  sfc_topo       (id,jd)  )
@@ -236,6 +237,7 @@ allocate (  soil_absorb     (id,jd,nlayers)  )
 !         Use this to obtain nlayers and subsurface temperatures
 
 filename= 'INPUT/soil_temp.res.nc'
+f_rst= 'INPUT/soil_temp.res.nc'
 !new way of reading restarts
 rst2 = (nlay_rst /=0 .and. nlay_rst /= nlayers)
 if (rst2) then
@@ -289,7 +291,7 @@ if( file_exists( trim( filename ) ) ) then
     t_surf(:,:)= tsoil(:,:,1)
 
     do nt= 1, nice_mass
-        if(mcpu0)  print*, 'surface frost micro',  nt, sfc_frost_micro(1,:,nt)
+        if(mcpu0)  print*, 'surface frost mom',  nt, sfc_frost_mom(1,:,nt)
     enddo
 
 else
@@ -333,10 +335,10 @@ else
     do nt=1, nice_mass
         where( lat > 80.0*pi/180.0 )
             sfc_frost(:,:,1)= 500.0
-            sfc_frost_micro(:,:,nt)= 500.0
+            sfc_frost_mom(:,:,nt)= 500.0
         elsewhere
             sfc_frost(:,:,1)= 0.0
-            sfc_frost_micro(:,:,nt)= 0.0
+            sfc_frost_mom(:,:,nt)= 0.0
         end where
     enddo
     soil_icex(:,:,:)= 0.0
@@ -362,7 +364,7 @@ endif
 
 !     ----- register diagnostic fields -----
 
-id_zgrid = diag_axis_init('zgrid', zgrid, 'm', 'z', 'soil levels',  &
+id_zgrid = diag_axis_init('zgrid', zgrid, 'm', 'z', 'soil level depths',  &
                     direction=-1,set_name=mod_name)
 
 id_subsfc = register_diag_field ( mod_name, 'tsoil',            &
@@ -372,7 +374,7 @@ id_subsfc = register_diag_field ( mod_name, 'tsoil',            &
 
 id_sflux = register_diag_field ( mod_name, 'sflux',            &
                                  (/axes(1:2),id_zgrid/), Time, &
-                                'Soil Fluxes', 'W/m/m',       &
+                                'Soil Heat Diffusion Flux', 'W/m/m',       &
                                  missing_value=missing_value )
 
 id_ts = register_diag_field ( mod_name, 'ts',                      &
@@ -387,7 +389,7 @@ id_thin = register_diag_field ( mod_name, 'thin',                  &
 
 id_frost = register_diag_field ( mod_name, 'frost',                &
                                  (/axes(1:2)/), Time,             &
-                                'Surface water ice', 'kg/m/m',    &
+                                'Surface water ice for bulk microphysics', 'kg/m/m',    &
                                  missing_value=missing_value )
 
 id_sfc_h2o2_chem = register_diag_field ( mod_name, 'sfc_h2o2_chem', &
@@ -395,12 +397,12 @@ id_sfc_h2o2_chem = register_diag_field ( mod_name, 'sfc_h2o2_chem', &
                                  'Surface H2O2', 'kg/m/m',    &
                                  missing_value=missing_value )
 
-allocate ( id_frost_micro(nice_mass) )
+allocate ( id_frost_mom(nice_mass) )
 ndx= ice_mass_indx(1)
 call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)
-tname= "frost_micro"
-id_frost_micro(1) = register_diag_field ( mod_name, trim(tname),  &
-         axes(1:2), Time, 'Surface ice mass', 'kg/m/m', &
+tname= "frost_mom"
+id_frost_mom(1) = register_diag_field ( mod_name, trim(tname),  &
+         axes(1:2), Time, 'Surface ice mass for moment microphysics', 'kg/m/m', &
          missing_value=missing_value)
 
 if (nice_mass.gt.1) then
@@ -410,9 +412,9 @@ if (nice_mass.gt.1) then
         print*, 'len 2',len_trim(adjustl(tracer_name2))
         print*, 'len 1',len_trim(adjustl(tracer_name))
 
-        tname= "frost_micro" // trim(tracer_name2(len_trim(adjustl(tracer_name))+1:len_trim(adjustl(tracer_name2))))
-        id_frost_micro(nt) = register_diag_field ( mod_name, trim(tname),  &
-             axes(1:2), time, 'surface ice mass', 'kg/m/m', &
+        tname= "frost_mom" // trim(tracer_name2(len_trim(adjustl(tracer_name))+1:len_trim(adjustl(tracer_name2))))
+        id_frost_mom(nt) = register_diag_field ( mod_name, trim(tname),  &
+             axes(1:2), time, 'surface ice mass for moment microphysics', 'kg/m/m', &
              missing_value=missing_value)
 
     enddo
@@ -425,37 +427,37 @@ id_snow = register_diag_field ( mod_name, 'snow',                 &
 
 id_alb = register_diag_field ( mod_name, 'alb',                   &
                                  (/axes(1:2)/), Time,            &
-                                'Surface Albedo', ' ',         &
+                                'Current Surface Albedo', ' ',         &
                                  missing_value=missing_value )
 
 id_alb0 = register_static_field ( mod_name, 'alb0',               &
                                  (/axes(1:2)/),                  &
-                                'Surface Albedo', ' ',         &
+                                'Initial Surface Albedo', ' ',         &
                                  missing_value=missing_value )
 
 id_thin0 = register_static_field ( mod_name, 'thin0',                 &
                                  (/axes(1:2)/),                      &
-                                'Surface Thermal Inertia', 'mks',    &
+                                'Initial Surface Thermal Inertia', 'mks',    &
                                  missing_value=missing_value )
 
 id_emiss0 = register_static_field ( mod_name, 'emiss0',               &
                                  (/axes(1:2)/),                      &
-                                'Surface Emissivity', ' ',           &
+                                'Initial Surface Emissivity', ' ',           &
                                  missing_value=missing_value )
 
 id_ruff0 = register_static_field ( mod_name, 'zruff0',                &
                                  (/axes(1:2)/),                      &
-                                'Surface Roughness', ' ',            &
+                                'Initial Surface Roughness', ' ',            &
                                  missing_value=missing_value )
 
 id_gice0 = register_static_field ( mod_name, 'gice0',                &
                                  (/axes(1:2)/),                      &
-                                'GRS Ice', ' ',            &
+                                'Initial GRS Ice', ' ',            &
                                  missing_value=missing_value )
 
 id_npc0  = register_static_field ( mod_name, 'npc0',                &
                                  (/axes(1:2)/),                      &
-                                'npcflag', ' ',            &
+                                'Initial npcflag', ' ',            &
                                  missing_value=missing_value )
 
 
@@ -605,24 +607,25 @@ if (mcpu0) print*,'lon=0 ice values are: ',grs_ice(1,:)
 filename= 'INPUT/npcflag8.nc'
 fieldname= 'npcflag'
 
-if( file_exists( trim( filename ) ) ) then
+if( (file_exists( trim( filename ) ))  ) then
 #ifdef CUBE_CORE
     call read_cube_sfc_field( nlon, mlat, filename, fieldname, npcflag )
 #else
     call read_sfc_field( nlon, mlat, lonb, latb, filename, fieldname, npcflag )
 #endif
     if(mcpu0) print *, 'Have read npcflag data file: '
-
+    if (.not. (file_exists( trim( f_rst ))) ) then
 !!----reset the surface water ice to follow the npc flag file----!!
-    do nt=1,nice_mass
-        where (npcflag .gt. 0.5)
-            sfc_frost_micro(:,:,nt) = 500.
-            sfc_frost(:,:,1) = 500.
-        elsewhere
-            sfc_frost_micro(:,:,nt) = 0.
-            sfc_frost(:,:,1) = 0.
-        end where
-    enddo
+        do nt=1,nice_mass
+            where (npcflag .gt. 0.5)
+                sfc_frost_mom(:,:,nt) = 500.
+                sfc_frost(:,:,1) = 500.
+            elsewhere
+                sfc_frost_mom(:,:,nt) = 0.
+                sfc_frost(:,:,1) = 0.
+            end where
+        enddo
+    endif
 else  !       else use default value  (= 0.0)
     npcflag(:,:)= 0.0
 endif
@@ -630,7 +633,7 @@ endif
 
 if (mcpu0) then
     print*,'lon=0 npc values are: ',npcflag(1,:)
-    if (all(sfc_frost_micro(:,:,1).eq.sfc_frost(:,:,1))) print*,'sfc_frost_micro = sfc_frost'
+    if (all(sfc_frost_mom(:,:,1).eq.sfc_frost(:,:,1))) print*,'sfc_frost_mom = sfc_frost'
 endif
 
 
@@ -729,7 +732,7 @@ real, dimension(size(ps,1),size(ps,2)) :: irflx, tcrit, soilp, zo, &
                                           msink, tsfc, gk, grs, snow_orig, &
                                           snowtmp, subday_orig
 
-real, dimension(size(ps,1),size(ps,2)) :: coszen, frost, frost_micro, albedo, emiss, delp
+real, dimension(size(ps,1),size(ps,2)) :: coszen, frost, frost_mom, albedo, emiss, delp
 
 real, dimension(size(ps,1),size(ps,2),size(tgrnd,3)) :: tg,torig,sflux,tgtmp
 
@@ -906,15 +909,15 @@ endif       ! -----------------  end of tridiagonal matrix formulation
 ! TB18c : high threshold value set in namelist if no changes of albedo wanted for frost
 if (do_waterice_albedo) then
     frost(:,:)= sfc_frost(is:ie,js:je,1)
-    frost_micro(:,:)= sfc_frost_micro(is:ie,js:je,1)
+    frost_mom(:,:)= sfc_frost_mom(is:ie,js:je,1)
 else
     frost(:,:)= 0.
-    frost_micro(:,:)= 0.
+    frost_mom(:,:)= 0.
 endif
 coszen(:,:)= 0.0
-if (do_moment_micro) then
+if (do_moment_water) then
     call albedo_calc( is, js, lon, lat, &
-                coszen, tsfc, ps, snowin, frost_micro, albedo, emiss )
+                coszen, tsfc, ps, snowin, frost_mom, albedo, emiss )
 else
     call albedo_calc( is, js, lon, lat, &
                 coszen, tsfc, ps, snowin, frost, albedo, emiss )
@@ -1450,7 +1453,7 @@ id_restart = register_restart_field(Til_restart, fname, 'frost', sfc_frost, doma
 do n=1,nice_mass
     ndx= ice_mass_indx(n)
     call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)
-    id_restart = register_restart_field(Til_restart, fname, trim(tracer_name), sfc_frost_micro(:,:,n), domain=phys_domain,mandatory=.false.)
+    id_restart = register_restart_field(Til_restart, fname, trim(tracer_name), sfc_frost_mom(:,:,n), domain=phys_domain,mandatory=.false.)
 end do
 
 id_restart = register_restart_field(Til_restart, fname, 'tg', tsoil, domain=phys_domain,mandatory=.false.)
@@ -1471,7 +1474,7 @@ if (rst2) then
     do n=1,nice_mass
         ndx= ice_mass_indx(n)
         call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)
-        id_restart = register_restart_field(Til_restart2, fname, trim(tracer_name), sfc_frost_micro(:,:,n), domain=phys_domain,mandatory=.false.)
+        id_restart = register_restart_field(Til_restart2, fname, trim(tracer_name), sfc_frost_mom(:,:,n), domain=phys_domain,mandatory=.false.)
     end do
 
     id_restart = register_restart_field(Til_restart2, fname, 'tg', tsoil_r, domain=phys_domain,mandatory=.false.)

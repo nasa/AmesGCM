@@ -11,7 +11,7 @@ use fms_mod, only: error_mesg, FATAL,             &
 use fms2_io_mod,            only:  file_exists
 use field_manager_mod, only: MODEL_ATMOS
 use tracer_manager_mod, only:  get_number_tracers
-use initracer_mod, only: ntrace_micro, ndust_mass, dust_mass_indx, &
+use initracer_mod, only: ntrace_mom, ndust_mass, dust_mass_indx, &
     dust_nb_indx, dust_cor_indx,                                     &
     ice_mass_indx, ice_nb_indx, vapor_indx, nt_nontag
 use aerosol_util_mod, only: do_15band, Reff_fixed
@@ -24,7 +24,7 @@ private
 public :: ames_rt_driver, ames_radsetup, settozero4, &
        settozero, dtridgl, fillpt, qextv, l_nrefv, &
        nltecool,interp1,interp2,interp3, l_nspecti, &
-       radactive_dust_TOG, nbin
+       radactive_dust_TOG, nbin, scale_by_scon
 
 real*8, parameter :: scalep = 100.D+0
 real*8, parameter :: cmk = 3.51D+22
@@ -83,6 +83,11 @@ real*8, parameter :: WREFCO2(L_REFH2O) = [                       &
 real*8, parameter :: WREFH2O(L_REFH2O) = [                       &
              1.0D-7, 1.0D-6, 1.0D-5, 1.0D-4, 1.0D-3, 1.0D-2,   &
              1.0D-1, 2.0D-1, 3.0D-1, 4.0D-1                  ]
+
+!     These are for CO2-CO2 and CO2-H2 CIA
+  real*8, allocatable :: kgbar_tab(:,:)
+  real*8, allocatable :: kbbar_tab(:,:)
+  real*8, allocatable :: khbar_tab(:,:)
 
 !     If the CO2 optical depth (top to the surface) is less than
 !     this value, we place that Gauss-point into the "zeros"
@@ -206,30 +211,52 @@ logical :: radactive_water= .false.   ! Make water vapor radiatively active
 logical :: radactive_cloud = .false.  ! Turn on radiative effects of moment scheme clouds
 logical :: radactive_cloud_bin = .false. ! Turn on radiative effects of bin simple clouds
 real    :: scale_cloud_bin= 1.0
-real    :: simple_cloud_radius = 1.5                !  cloud radius in microns
-logical :: do_nlte = .false.  ! do non-LTE correction in IR
-logical :: ames_15band = .false.  ! Use 15 band version. If false, use 12 band
+real    :: simple_cloud_radius = 1.5                !  cloud radius in microns    
+logical :: do_nlte = .false.             ! do non-LTE correction in IR
+logical :: ames_15band = .false.         ! Use 15 band version. If false, use 12 band
+logical :: use_extended_cor_ks = .false. ! Use RT tables with extended temperture range and CO2 line widths appropriate for higher pressures
+logical :: do_cia = .false. ! Account for collision induced absorption (CIA) opacity, needed for massive CO2 atmospheres
+real*8  :: cia_co2 = 0.0     ! Atmospheric molar concentration of CO2 for collision induced absorption (CIA) calculation, do_cia must be true
+real*8  :: cia_h2 = 0.0     ! Atmospheric molar concentration of H2 for collision induced absorption (CIA) calculation, do cia must be true
 integer :: radactive_dust_TOG = 0   ! 0 for clear
                            ! 1 for moment tracers
                            ! 2 for bin tracers
                            ! 3 for prescribed, fixed
+      
 character (len=128) :: rtdata_path = 'INPUT/'
 logical :: use_boxinterp12 = .true. ! use boxinterp for k-coef interpolation (ames_15band flag must be false)
 
 logical :: do_fv3_dust_opt= .false.
 logical :: do_dust_ir_scale = .false.
-
+logical :: do_irflux_scale = .false. ! optional scaling factor to adjust upward ir flux equal to sigmaT4
+logical :: scale_by_scon = .false. ! flag to scale the solar flux by solar constant namelist variable in astronomy
 real :: fv3_gfac= 0.65
 real :: fv3_sscat = 0.90
 real :: fv3_ir_scale= 1.0
+logical :: user_fixed_dust_opts = .false.
+real, dimension(7) :: qxv_read = (/1.834D0, 2.296D0, 2.672D0,        &
+                    2.829D0, 2.698D0, 2.452D0, 2.261D0/)
+real, dimension(7) :: qsv_read = (/1.695D0, 2.031D0, 2.583D0,        &
+                    2.744D0, 2.626D0, 2.225D0, 1.525D0/)
+real, dimension(7) :: gv_read = (/0.551D0, 0.640D0, 0.661D0,        &
+                    0.678D0, 0.690D0, 0.743D0, 0.868D0/)
+real, dimension(8) :: qxi_read = (/0.008D0, 0.262D0, 0.491D0,        &
+                                          1.017D0, 0.444D0, 0., 0., 0. /)
+real, dimension(8) :: qsi_read = (/0.001D0, 0.037D0, 0.122D0,        &
+                                          0.351D0, 0.336D0, 0., 0., 0. /)
+real, dimension(8) :: gi_read = (/0.004D0, 0.030D0, 0.095D0,        &
+                                          0.214D0, 0.316D0, 0., 0., 0. /)
 
 namelist /ames_rtmod_nml/ tmom, radactive_water,                &
        radactive_cloud, do_nlte, rtdata_path,                   &
-       ames_15band, radactive_dust_TOG, use_boxinterp12,        &
+       ames_15band, use_extended_cor_ks,                        &
+       do_cia, cia_co2, cia_h2, &
+       radactive_dust_TOG, use_boxinterp12,        &
        do_fv3_dust_opt, fv3_gfac, fv3_sscat, do_dust_ir_scale,  &
        fv3_ir_scale, radactive_cloud_bin, scale_cloud_bin,      &
-       simple_cloud_radius
-
+       simple_cloud_radius, do_irflux_scale, scale_by_scon,     &
+       qxv_read, qsv_read, gv_read, qxi_read, qsi_read, gi_read, &
+       user_fixed_dust_opts
 
 !==================================
 
@@ -338,7 +365,7 @@ call setspi()
 
 !    The following call Interpolate CO2 k coefficients to the finer pressure grid
 !           and sets up default optical constants for dust (based on assumed size distribution)
-call setrad()
+call setrad(mcpu0)
 
 !     The following call initializes optical arrays for dust and water ice clouds
 call initcld(mcpu0)
@@ -386,7 +413,31 @@ implicit none
 integer :: err
 logical :: mcpu0
 
-if (ames_15band) then !do 15 band radiation & 32 guass points
+if (use_extended_cor_ks) then !do 15 band radiation & 16 guass points
+    L_NSPECTI =  8
+    L_NREFI   = 7
+    L_NPREF   = 25
+    L_NTREF   = 16
+    L_NGAUSS  = 17
+    allocate(CO2I(L_NTREF,L_NPREF,L_REFH2O,L_NSPECTI,L_NGAUSS), stat=err)
+    allocate(CO2V(L_NTREF,L_NPREF,L_REFH2O,L_NSPECTV,L_NGAUSS), stat=err)
+    allocate(GWEIGHT(L_NGAUSS), stat=err)
+    allocate(kgbar_tab(L_NSPECTI,15), stat=err)
+    allocate(kbbar_tab(L_NSPECTI,15), stat=err)
+    allocate(khbar_tab(L_NSPECTI,15), stat=err)
+!  For 16 gauss points
+    GWEIGHT(:) = [                       &
+             4.8083554740D-02, 1.0563099137D-01,              &
+             1.4901065679D-01, 1.7227479710D-01,              &
+             1.7227479710D-01, 1.4901065679D-01,              &
+             1.0563099137D-01, 4.8083554740D-02,              &
+             2.5307134073D-03, 5.5595258613D-03,              &
+             7.8426661469D-03, 9.0670945845D-03,              &
+             9.0670945845D-03, 7.8426661469D-03,              &
+             5.5595258613D-03, 2.5307134073D-03,  0.0D0 ]
+
+
+else if (ames_15band) then !do 15 band radiation & 32 guass points
     L_NSPECTI =  8
     L_NREFI   = 7
     L_NPREF   = 25
@@ -685,7 +736,7 @@ subroutine ames_rt_driver(pl, tl, ptop,           &
 		 diag,                                  &   ! scalar
 		 taurefd_out,                           &   ! dustref(:,:,kd)
                  taurefc_out,                           &   ! cldref (:,:,kd)
-	         taudust_momARG,                              &   ! taudust_mom(:,:,2)
+	         taudust_momARG,taudust_fixARG,                 &   ! taudust_mom(:,:,2)
 		 tstrat_dt, taudust_reffARG,                        &
     tbands  )
 
@@ -716,6 +767,7 @@ logical, intent(in), optional :: directonlyarg
 logical, intent(in) :: diag
 real*8, intent(out), optional :: taudust_diagarg(2)
 real*8, intent(out), optional :: taudust_momarg(2)
+real*8, intent(out), optional :: taudust_fixarg(2)
 real*8, intent(out), optional :: taucloud_diagarg(2)
 real*8, intent(out), optional :: outsolarg
 real*8, intent(out), optional :: diffvtarg
@@ -913,6 +965,11 @@ call opt_dst(qtrace,pl, &
 
 if (present(taudust_reffarg)) taudust_reffarg(:,:) = taureff_split(:,:)
 if (present(taudust_momarg)) taudust_momarg = taudust_diag
+if (present(taudust_fixarg)) then
+    call ini_optdst(GV,GI,Qxvdst,Qxidst,Qsvdst,Qsidst,gvdst,gidst,Qextrefdst, surf2d, .true.)
+    taudust_fixarg(1) = sum(taud_fix_in)
+    taudust_fixarg(2) = taudust_fixarg(1)/Qextrefdst(1) * ( Qxidst(1,l_nrefi)-Qsidst(1,l_nrefi) )
+endif
 
 if(.not.(nml_switch(radactive_dust_tog,0))) then
     if(radactive_dust_tog.eq.1) then
@@ -1017,13 +1074,11 @@ if (dosw) then
                       qextrefcld,taurefcld,qxvcld,qsvcld,gvcld)
         endif
 
-
         do nw=1,l_nspectv
             do ng=1,l_ngauss
                 cumtauv(nw,ng) = taucumv(l_levels,nw,ng)
             enddo
         enddo
-
 
         call sfluxv(dtauv,tauv,taucumv,albv,wbarv,cosbv,      &
                    acosz,sol,nfluxtopv,fmnetv,     &
@@ -1050,7 +1105,7 @@ if (dolw) then !do ir calculation
 
 
     if (ames_15band .or. use_boxinterp12) then
-        call optci15(dtaui,taucumi,plev,    &
+        call optci15(dtaui,taucumi,plev,tlev,    &
                      qextrefdst,qxidst,qsidst,gidst,cosbi,wbari,  &
                      tauref,tmid,pmid,taugsurfi,qh2o,     &
                      qextrefcld,taurefcld,qxicld,qsicld,gicld)
@@ -1194,7 +1249,7 @@ if (dolw) lw_heating= gcp * lw_heating / scalep
 if (dolw) lw_heating_spec= gcp * lw_heating_spec / scalep
 if (dosw) sw_heating= gcp * sw_heating / scalep
 
-
+#ifndef RELEASE
 if (do_nlte) then
 ! longwave (IR 15 micron cooling) NLTE correction
 
@@ -1232,6 +1287,7 @@ if (do_nlte) then
         end do
     endif !15 band
 endif !IR NLTE correction
+#endif
 
 ! shortwave (solar heating) NLTE correction
 irtot0 = gcp*(FMNETI(1) - NFLUXTOPI)/scalep
@@ -1552,79 +1608,74 @@ if(.not.(present(fixed))) then
         enddo
     enddo
 
-  if( present(surf2d) )  surf2d(:,:)= 0.0
-
-!      calculate surf(1:nbin_rt) based on assumed size distribution
-#ifdef SKIP
-    do k= 1, l_layers
-      surf2d(:,k)= surf(:)
-    enddo
-
-    ! Calculate Qext, Qscat, g for fixed dust
-    dev2 = 1. / ( sqrt(2.)*dev_dt )
-    Rs = 0.
-    surf = 0.
-    Rs = min( max(reff_fixed,1.e-7) , 50.e-6 )
-    Rs = 1. / Rs
-    do i = 1, nbin_rt
-        surf(i) = 0.5 * ( derf( dlog(radb_rt(i+1)*Rs) * dev2 )     &
-         -derf( dlog(radb_rt(i)  *Rs) * dev2 ) )
-    enddo
-
-
-print *, 'Output from ini_optdust   --------------- '
-do k= 1, nbin_rt
-   print *, k, rad_rt(k), qscatd_dst(k,1), gd_dst(k,1)
-enddo
-#endif SKIP
-
-
-
+    if( present(surf2d) )  surf2d(:,:)= 0.0
 
 
 else   !     --------------
+    if (user_fixed_dust_opts) then
+        qextref(:) = qxv_read(l_nrefv)
 
-    ! Calculate Qext, Qscat, g for fixed dust
-    dev2 = 1. / ( sqrt(2.)*dev_dt )
-    Rs = 0.
-    surf = 0.
-
-    Rs = min( max(reff_fixed,1.e-7) , 50.e-6 )
-    Rs = 1. / Rs
-
-    do i = 1, nbin_rt
-        surf(i) = 0.5 * ( derf( dlog(radb_rt(i+1)*Rs) * dev2 )     &
-         -derf( dlog(radb_rt(i)  *Rs) * dev2 ) )
-    enddo
-
-!      Collect size-bin expansion for each layer :   surf2d(nbin_rt,l_layers)
-
-    if( present(surf2d) ) then
-        do k= 1, l_layers
-          surf2d(:,k)= surf(:)
+        do i = 1, nlonv
+            do k = 1, l_levels+1
+                qxv(k,i) = qxv_read(i)
+                qsv(k,i) = qsv_read(i)
+                gvini(k,i)  = gv_read(i)
+            enddo
         enddo
-    endif
+        do i = 1, nloni
+            do k = 1, l_levels+1
+                qxi(k,i) = qxi_read(i)
+                qsi(k,i) = qsi_read(i)
+                giini(k,i)  = gi_read(i)
+            enddo
+        enddo
 
-    call calc_opts(nlon=nlonv,nbin=nbin_rt, &
-                    qext_in=qextv_dst,qscat_in=qscatv_dst,g_in=gv_dst, &
-                    surf=surf,qx_out=qxv(1,:),qs_out=qsv(1,:),g_out=gvini(1,:))
-    do k=1,l_levels+1
-        qxv(k,:)=qxv(1,:)
-        qsv(k,:)=qsv(1,:)
-        gvini(k,:)=gvini(1,:)
-    enddo
+        if( present(surf2d) )  surf2d(:,:)= 0.0
+    else
+        
+        ! Calculate Qext, Qscat, g for fixed dust
+        dev2 = 1. / ( sqrt(2.)*dev_dt )
+        Rs = 0.
+        surf = 0.
 
-    call calc_opts(nlon=nloni,nbin=nbin_rt, &
-                    qext_in=qexti_dst,qscat_in=qscati_dst,g_in=gi_dst, &
-                    surf=surf,qx_out=qxi(1,:),qs_out=qsi(1,:),g_out=giini(1,:))
+        Rs = min( max(reff_fixed,1.e-7) , 50.e-6 )
+        Rs = 1. / Rs
 
-    do k=1,l_levels+1
-        qxi(k,:)=qxi(1,:)
-        qsi(k,:)=qsi(1,:)
-        giini(k,:)=giini(1,:)
-    enddo
+        do i = 1, nbin_rt
+            surf(i) = 0.5 * ( derf( dlog(radb_rt(i+1)*Rs) * dev2 )     &
+             -derf( dlog(radb_rt(i)  *Rs) * dev2 ) )
+        enddo
 
-    qextref(:) = qxv(:,l_nrefv)
+    !      Collect size-bin expansion for each layer :   surf2d(nbin_rt,l_layers)
+
+        if( present(surf2d) ) then
+            do k= 1, l_layers
+              surf2d(:,k)= surf(:)
+            enddo
+        endif
+
+        call calc_opts(nlon=nlonv,nbin=nbin_rt, &
+                        qext_in=qextv_dst,qscat_in=qscatv_dst,g_in=gv_dst, &
+                        surf=surf,qx_out=qxv(1,:),qs_out=qsv(1,:),g_out=gvini(1,:))
+        do k=1,l_levels+1
+            qxv(k,:)=qxv(1,:)
+            qsv(k,:)=qsv(1,:)
+            gvini(k,:)=gvini(1,:)
+        enddo
+
+        call calc_opts(nlon=nloni,nbin=nbin_rt, &
+                        qext_in=qexti_dst,qscat_in=qscati_dst,g_in=gi_dst, &
+                        surf=surf,qx_out=qxi(1,:),qs_out=qsi(1,:),g_out=giini(1,:))
+
+        do k=1,l_levels+1
+            qxi(k,:)=qxi(1,:)
+            qsi(k,:)=qsi(1,:)
+            giini(k,:)=giini(1,:)
+        enddo
+
+        qextref(:) = qxv(:,l_nrefv)
+        
+    endif ! user_fixed_dust_opts
 
 endif
 
@@ -2715,7 +2766,6 @@ enddo
 do nw=1,l_nspectv
 
     !  First, the special "clear" channel
-
     ng = l_ngauss
     do l=1,l_layers
         k              = 2*l+1
@@ -2898,6 +2948,8 @@ real*8  :: qh2o(l_levels), wratio(l_levels)
 real*8  :: kcoef(4)
 integer :: nh2o(l_levels)
 
+logical  :: pinter(L_LEVELS), tinter(L_LEVELS)
+real*8  :: kcoe
 !======================================================================C
 
 dtauki(l_levels+1,:,:)   = 0.0d0
@@ -3104,7 +3156,7 @@ end subroutine optci
 !=====================================================================
 !=====================================================================
 
-subroutine optci15(dtaui,taucumi,plev,       &
+subroutine optci15(dtaui,taucumi,plev,tlev,       &
                qrefv,qxidst,qsidst,gidst,cosbi,wbari,tauref,   &
                tmid,pmid,taugsurf,qh2o,                &
                qextrefcld,taurefcld,qxicld,qsicld,gicld)
@@ -3137,6 +3189,7 @@ real*8  :: taui(l_nlevrad,l_nspecti,l_ngauss)
 real*8  :: taucumi(l_levels,l_nspecti,l_ngauss)
 real*8  :: taugas
 real*8  :: plev(l_levels)
+real*8  :: tlev(l_levels)
 real*8  :: tmid(l_levels), pmid(l_levels), lpmid(l_levels)
 
 
@@ -3184,6 +3237,21 @@ real*8  :: qh2o(l_levels), wratio(l_levels)
 
 logical  :: pinter(l_levels), tinter(l_levels)
 real*8  :: kcoe
+
+! For CO2 and H2 CIA calculations (CO2-CO2 CIA based on Wordsworth et al., 2010; CO2-H2 CIA based on Turbet et al., 2020)
+
+real*8  :: wnoi(L_NSPECTI)
+real*8  :: dwni(L_NSPECTI)
+real*8  :: dtaucia(L_LEVELS+1,L_NSPECTI)
+real*8  :: dtau_co2cia(L_LEVELS+1,L_NSPECTI)
+real*8  :: dtau_h2n2cia(L_LEVELS+1,L_NSPECTI)
+real*8  :: taucia(L_NSPECTI)
+real*8  :: kgbar,kbbar,khbar
+real*8  :: tmp,pmp
+real*8  :: plength,namgCO2,namgH2
+real*8  :: kcoeff(l_levels,l_nspecti,l_ngauss)
+integer :: j
+
 !======================================================================C
 
 dtauki(l_levels+1,:,:)   = 0.0d0
@@ -3200,6 +3268,7 @@ taureflk = 0.0
 taucldk = 0.0
 taucumi = 0.0
 dtaui = 0.0
+dtaucia = 0.0d0
 
 !  save old tauref values
 
@@ -3237,6 +3306,40 @@ do k=2,l_levels
     do nw=1,l_nspecti
         taeros(k,nw) = tauref(k)    * qxidst(k,nw)
         tcloud(k,nw) = taurefcld(k) * qxicld(k,nw)
+
+        !Begin CIA calculation
+        if (do_cia) then
+
+            tmp = .5*(tlev(k)+tlev(k-1))
+            pmp = .5*(plev(k)+plev(k-1))
+
+            call kinter(nw,tmp,kgbar_tab,kgbar)
+            call kinter(nw,tmp,kbbar_tab,kbbar)
+            call kinter(nw,tmp,khbar_tab,khbar)
+
+            dtau_co2cia(k,nw) = 0.
+            dtau_h2n2cia(k,nw) = 0.
+            namgCO2=0.
+            namgH2=0.
+
+            if(k.gt.3) then
+                plength=50.8*tmp*(dpr(k)/pmp) !path length in meters
+
+                ! define amounts of CO2 and H2 in amagats where cia_co2 and cia_h2 are the molar concentration of CO2 and H2 (e.g. mols H2 / mols of both CO2+H2) 
+                namgCO2=cia_co2*(pmp/tmp)*(273.15/1013.25)
+                namgH2=cia_h2*(pmp/tmp)*(273.15/1013.25)
+
+                dtau_co2cia(k,nw)=namgCO2*namgCO2*100.*(kgbar+kbbar)*plength
+                dtau_h2n2cia(k,nw)=namgH2*namgCO2*100.*khbar*plength
+
+            end if
+
+            dtaucia(k,nw) = dtau_co2cia(k,nw)+dtau_h2n2cia(k,nw)
+        else
+            dtaucia(k,nw) = 0.0
+        endif  !End CIA tau calculation
+        
+
     end do
 end do
 
@@ -3264,14 +3367,14 @@ do k=2,l_levels
             taugas          = u(k)*10.0d0**ans
 
             taugsurf(nw,ng) = taugsurf(nw,ng) + taugas
-            dtauki(k,nw,ng) = taugas+taeros(k,nw)+tcloud(k,nw)
+            dtauki(k,nw,ng) = taugas+taeros(k,nw)+tcloud(k,nw)+dtaucia(k,nw)
         end do
 
         !  now fill in the "clear" part of the spectrum (ng = l_ngauss)
         !  which holds continuum opacity only
 
         ng              = l_ngauss
-        dtauki(k,nw,ng) = taeros(k,nw)+tcloud(k,nw)
+        dtauki(k,nw,ng) = taeros(k,nw)+tcloud(k,nw)+dtaucia(k,nw)
     end do
 
 end do
@@ -3378,6 +3481,54 @@ end do
 
 return
 end subroutine optci15
+
+
+                                     
+!=====================================================================
+!=====================================================================
+
+subroutine kinter(nw,temp,kbar_tab,kbar)
+
+! This routine interpolates the CIA coefficients to the current
+! atmospheric temperature
+! -------------------------------------------------------------
+! kbar_tab is a 2D array whose rows correspond to wavenumber
+! and whose columns correspond to temperature
+! -------------------------------------------------------------
+
+    implicit none
+
+    integer, parameter :: nwave=8
+    integer, parameter :: ntemp=15
+    real*8  kbar_tab(nwave,ntemp)
+    real*8 kbar
+    integer nw,nt
+
+    real*8 t_tab(ntemp)
+    real*8 temp
+    integer kt
+    real*8 logk1,logk2,logk
+
+    data t_tab/100.,150.,200.,250.,300.,350.,400.,450.,500.,550.,&
+                       600.,650.,700.,750.,800./
+
+! limit the bounds of temperature if we go beyond the table
+    if(temp.lt.100.) temp=100.
+    if(temp.gt.800.) temp=800.
+
+    do nt=1,ntemp-1
+        if(temp.ge.t_tab(nt).and.temp.le.t_tab(nt+1)) go to 100
+    end do
+100 kt=nt
+
+    logk1=log(kbar_tab(nw,kt))
+    logk2=log(kbar_tab(nw,kt+1))
+    logk=logk1+(temp-t_tab(kt))*(logk2-logk1)/(t_tab(kt+1)-t_tab(kt))
+    kbar = exp(logk)
+    if(kbar_tab(nw,kt).eq.0.and.kbar_tab(nw,kt+1).eq.0.) kbar=0.
+
+    return
+end subroutine kinter
 
 !=====================================================================
 !=====================================================================
@@ -3507,7 +3658,6 @@ do nw=1,l_nspectv
                   taucumv(1,nw,ng),wbarv(1,nw,ng),             &
                   cosbv(1,nw,ng),ubar0,detau1(nw,ng))
 
-
     !       loop over the nterms beginning here
 
     eterm = min(detau1(nw,ng)/ubar0,maxexp)
@@ -3577,6 +3727,8 @@ real*8  :: taugsurf(l_nspecti,l_ngauss-1), fzero
 real*8  :: fluxupis(l_nspecti,l_nlayrad)
 real*8  :: fluxdnis(l_nspecti,l_nlayrad)
 
+real*8  :: bsurftot, stfour
+
 logical :: diag
 
 !======================================================================C
@@ -3604,11 +3756,24 @@ tsurf = tlev(l_levels)
 nts   = tsurf*10.0d0-499.0d0
 ntt   = ttop *10.0d0-499.0d0
 
+!calculate optional scale factor to make spectrally integrated upward IR flux at the surface equal to sigma*T^4
+bsurftot=0.
+do nw=1,l_nspecti
+    bsurftot=bsurftot+dwni(nw)*(1.-rsfi)*planckir(nw,nts)
+end do
+bsurftot=3.14159*bsurftot
+stfour=5.67e-8*tsurf**4.
+
 do nw=1,l_nspecti
 
     !       surface emissions - independent of gauss points
 
-    bsurf = (1.-rsfi)*planckir(nw,nts)
+    ! check whether to apply the scaling factor to bsurf
+    if( do_irflux_scale) then
+        bsurf = (stfour/bsurftot)*(1.-rsfi)*planckir(nw,nts)
+    else
+        bsurf = (1.-rsfi)*planckir(nw,nts)
+    endif
     pltop = planckir(nw,ntt)
 
     !  if fzeroi(nw) = 1, then the k-coefficients are zero - skip to the
@@ -3706,7 +3871,7 @@ do nw=1,l_nspecti
 
 enddo      !End Spectral Interval LOOP
 
-! *** END OF MAJOR SPECTRAL INTERVAL LOOP IN THE INFRARED****
+!! *** END OF MAJOR SPECTRAL INTERVAL LOOP IN THE INFRARED****
 
 return
 end subroutine sfluxi
@@ -4540,7 +4705,7 @@ subroutine initcld(mcpu0)
 implicit none
 
 
-integer i,j,l,ii
+integer i,j,l,nw,ii
 logical mcpu0
 
 real*8 :: rmin  = 0.1e-6
@@ -4615,7 +4780,7 @@ enddo
 !     Read in the data files the Qext,Qscat and g values for each
 !     size bins and for each spectral interval.
 
-if (ames_15band) then
+if (ames_15band .OR. use_extended_cor_ks) then
     open(60,file=trim(rtdata_path)//'waterCoated_vis_JD_15bands.dat')
     open(61,file=trim(rtdata_path)//'waterCoated_ir_JD_15bands.dat')
     open(62,file=trim(rtdata_path)//'Dust_vis_wolff2010_JD_15bands.dat')
@@ -4689,6 +4854,23 @@ else
   close(63)
 endif
 
+if (do_cia) then
+
+    open(70,file=trim(rtdata_path)//'kgbar_8band_100_800.dat',form='formatted')
+    open(71,file=trim(rtdata_path)//'kbbar_8band_100_800.dat',form='formatted')
+    open(72,file=trim(rtdata_path)//'khbar_8band_T20_100_800.dat',form='formatted') !Turbet et al. (2020)
+!    open(72,file=trim(rtdata_path)//'khbar_8band_W17_100_800.dat',form='formatted') ! Wordsworth et al. (2017)
+    do nw=1,L_NSPECTI
+        read(70,666) (kgbar_tab(nw,j),j=1,15)
+        read(71,666) (kbbar_tab(nw,j),j=1,15)
+        read(72,666) (khbar_tab(nw,j),j=1,15)
+  666   format(1x,15(1pe13.3))
+    end do
+    close(70)
+    close(71)
+    close(72)
+
+endif
 
     open(60,file=trim(rtdata_path)//'waterCoatedQ_Tbright_MK.dat')
     open(61,file=trim(rtdata_path)//'DustQ_Tbright_MK.dat')
@@ -4746,8 +4928,8 @@ end subroutine initcld
 !=====================================================================
 !=====================================================================
 
-subroutine setrad()
-!
+subroutine setrad(mcpu0)
+!     
 !     Set up values used by the radiation code, such as the CO2 gas
 !     absorption coefficients.  True constants are defined, and the
 !     time-independent quantities used by the radiation code are
@@ -4775,7 +4957,7 @@ subroutine setrad()
 implicit none
 
 integer :: n, ns
-
+logical :: mcpu0
 integer :: nt, nw, ng, err
 !----------------------------------------------------------------------
 
@@ -4822,7 +5004,7 @@ allocate(qei1(L_NSPECTI), stat=err)
 allocate(qsi1(L_NSPECTI), stat=err)
 allocate(gi1(L_NSPECTI), stat=err)
 
-if (ames_15band) then
+if (ames_15band .OR. use_extended_cor_ks) then
     !     Qext for the IR
     qei1(:) =  [ 0.158D0, 0.467D0, 0.447D0,        &
                0.418D0, 0.414D0, 0.698D0, 1.026D0, 0.765D0   ]
@@ -4844,7 +5026,51 @@ else
                                           0.214D0, 0.316D0   ]
 endif
 
-if (ames_15band) then
+if (use_extended_cor_ks) then
+    pgasref( 1) = 1.000D-8
+    pgasref( 2) = 3.162D-8
+    pgasref( 3) = 1.000D-7
+    pgasref( 4) = 3.162D-7
+    pgasref( 5) = 1.000D-6
+    pgasref( 6) = 3.162D-6
+    pgasref( 7) = 1.000D-5
+    pgasref( 8) = 3.162D-5
+    pgasref( 9) = 1.000D-4
+    pgasref(10) = 3.162D-4
+    pgasref(11) = 1.000D-3
+    pgasref(12) = 3.162D-3
+    pgasref(13) = 1.000D-2
+    pgasref(14) = 3.162D-2
+    pgasref(15) = 1.000D-1
+    pgasref(16) = 3.162D-1
+    pgasref(17) = 1.000D0
+    pgasref(18) = 3.162D0
+    pgasref(19) = 1.000D+1
+    pgasref(20) = 3.162D+1
+    pgasref(21) = 1.000D+2
+    pgasref(22) = 3.162D+2
+    pgasref(23) = 1.000D+3
+    pgasref(24) = 3.162D+3
+    pgasref(25) = 1.000D+4
+
+    tgasref(1) = 50.000D0
+    tgasref(2) = 100.000D0
+    tgasref(3) = 150.000D0
+    tgasref(4) = 200.000D0
+    tgasref(5) = 250.000D0
+    tgasref(6) = 300.000D0
+    tgasref(7) = 350.000D0
+    tgasref(8)  = 400.000D0
+    tgasref(9)  = 450.000D0
+    tgasref(10) = 500.000D0
+    tgasref(11) = 550.000D0
+    tgasref(12) = 600.000D0
+    tgasref(13) = 650.000D0
+    tgasref(14) = 700.000D0
+    tgasref(15) = 750.000D0
+    tgasref(16) = 800.000D0
+ 
+else if (ames_15band) then
     pgasref( 1) = 1.000D-8
     pgasref( 2) = 3.162D-8
     pgasref( 3) = 1.000D-7
@@ -4942,6 +5168,14 @@ do n=1,l_nspecti
     wi(n)     = qscati(n)/qexti(n)
     gi(n)     = gi1(n)
     ggi(n)    = gi1(n)
+    if (.not. user_fixed_dust_opts) then
+        qxi_read(n)=qei1(n)
+        qsi_read(n)=qsi1(n)
+        if(qscati(n).ge.qexti(n)) then
+            qsi_read(n) = 0.99999*qexti(n)
+        end if
+        gi_read(n) = gi1(n)
+    endif
 
 end do
 !  FV3-like-------------------------------------
@@ -4957,8 +5191,8 @@ end do
 
 !     Interpolate CO2 k coefficients to the finer pressure grid.
 
-if (ames_15band) then
-    call initinterp(PGASREF)
+if (ames_15band .OR. use_extended_cor_ks) then
+    call initinterp(PGASREF,mcpu0)
 else
     call laginterp(PGASREF,PFGASREF)
 endif
@@ -5020,7 +5254,7 @@ allocate(bwni(l_nspecti+1),stat=err)
 !     bin wavenumber - wavenumber [cm^(-1)] at the edges of the ir
 !     spectral bins.
 
-if (ames_15band) then
+if (ames_15band .OR. use_extended_cor_ks) then
     bwni( 1) =   10.000d0       ! 1000.0 microns
     bwni( 2) =  300.300d0       !   33.3 microns
     bwni( 3) =  549.451d0       !   18.2 microns
@@ -5510,8 +5744,8 @@ end subroutine boxinterp
 !======================================================================C
 !======================================================================C
 
-subroutine initinterp(pgref)
-!  Set up for interpolation (linear in log pressure) of the CO2
+subroutine initinterp(pgref,mcpu0)
+!  Set up for interpolation (linear in log pressure) of the CO2 
 !  k-coefficients in the pressure domain.  Subsequent use of these
 !  values will use a simple linear interpolation in pressure.
 
@@ -5523,6 +5757,7 @@ real*8  :: co2i8(l_ntref,l_npref,l_refh2o,l_nspecti,l_ngauss)
 real*8  :: co2v8(l_ntref,l_npref,l_refh2o,l_nspectv,l_ngauss)
 real*8  :: pgref(l_npref)
 
+logical :: mcpu0
 
 real*8  :: x, xi(3), yi(3), ans
 real*8  :: p
@@ -5533,6 +5768,7 @@ real*8  :: p
 
 do n=1,L_NPREF
     pgref(n) = LOG10(PGREF(n))
+!    if(mcpu0) print*,'n, pgref(n)',n, pgref(n)
 end do
 
 !     Get CO2 k coefficients
@@ -5550,18 +5786,36 @@ end do
 !      read(20) fzeroi
 !      close(20)
 !
-!!   For 32 gauss points
-open(20,file=trim(rtdata_path)//'CO2H2O_V_2013_32', status='old',      &
-      form='unformatted')
-read(20) co2v8
-read(20) fzerov
-close(20)
 
-open(20,file=trim(rtdata_path)//'CO2H2O_IR_2013_32', status='old',    &
+if (use_extended_cor_ks) then
+    open(20,file=trim(rtdata_path)//'CO2H2O_V_15B_800K_v4', &
+          status='old', form='unformatted')
+    read(20) co2v8
+    read(20) fzerov
+    close(20)
+
+    open(20,file=trim(rtdata_path)//'CO2H2O_IR_15B_800K_v4', &
+          status='old', form='unformatted')
+    read(20) co2i8
+    read(20) fzeroi
+    close(20)
+
+     
+else
+
+!!   For 32 gauss points
+    open(20,file=trim(rtdata_path)//'CO2H2O_V_2013_32', status='old',      &
       form='unformatted')
-read(20) co2i8
-read(20) fzeroi
-close(20)
+    read(20) co2v8
+    read(20) fzerov
+    close(20)
+
+    open(20,file=trim(rtdata_path)//'CO2H2O_IR_2013_32', status='old',    &
+      form='unformatted')
+    read(20) co2i8
+    read(20) fzeroi
+    close(20)
+endif
 
 !  Take Log10 of the values - we interpolate the log10 of the values,
 !  not the values themselves.   Smallest value is 1.0E-200.

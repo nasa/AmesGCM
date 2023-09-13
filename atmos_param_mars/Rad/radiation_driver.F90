@@ -112,6 +112,7 @@ integer :: id_irupflx_d, id_irdnflx_d, id_swupflx_d, id_swdnflx_d
 integer :: id_swnetflx_d, id_irnetflx_d
 integer :: id_irupflx, id_irdnflx, id_swupflx, id_swdnflx
 integer :: id_irupflx_top, id_irdnflx_top, id_swupflx_top, id_swdnflx_top
+integer :: id_irupflx_sfc, id_irdnflx_sfc, id_swupflx_sfc, id_swdnflx_sfc
 integer :: id_swnetflx, id_irnetflx
 integer :: id_taudust_VIS,id_taudust_IR
 integer :: id_taucloud_VIS,id_taucloud_IR
@@ -136,7 +137,7 @@ subroutine radiation_driver ( is, js, lon, lat, dt, Time,                 &
                                p_half, p_full, z_half, tsfc, albedo,      &
                                sfc_emiss, t, r, tdt, rdt,                 &
                                swfsfc, lwfsfc, cosz, tdtlw,tdt_rad,       &
-                               taudust, taucloud, taudust_mom, pref)
+                               taudust, taucloud, taudust_mom, taudust_fix, pref)
 !=======================================================
 !  main radiation driver
 !=======================================================
@@ -158,7 +159,7 @@ real, intent(inout), dimension(:,:,:)   :: tdtlw
 real, intent(out),   dimension(:,:)     :: swfsfc, lwfsfc
 real, intent(out),   dimension(:,:)     :: cosz
 real, intent(out),    dimension(:,:,:)   :: tdt_rad
-real, intent(out),    dimension(:,:,:)   :: taudust, taucloud, taudust_mom
+real, intent(out),    dimension(:,:,:)   :: taudust, taucloud, taudust_mom, taudust_fix
 real, intent(in)                        :: pref
 
 ! Local Variables
@@ -303,7 +304,6 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                            dustref_fix)
     dustref(:,:,:) = 0.
     cldref(:,:,:) = 0.
-
     nice= ice_bin_indx(1)
     cldice(:,:,:)= r(:,:,:,nice)
 
@@ -331,6 +331,7 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                    tstrat(is:ie,js:je),                 &
                    tstrat_dt,                           &
                    taudust_reff(is:ie,js:je,:,:),       &
+                   taudust_fix,                         &
                    tbands                               )
 
 !taudust_reff(is:ie,js:je,:,:) = 0.01
@@ -339,7 +340,9 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     tsat(:,:) = 3182.48 / ( 23.3494 - log( ph_mb(:,:,1) ) )
     WHERE (tstrat(is:ie,js:je) .lt. tsat(:,:)) tstrat(is:ie,js:je) = tsat(:,:)
 
-
+    do k= 1, kd 
+        hsw(:,:,k)=  frac(:,:)*hsw(:,:,k)
+    enddo 
     trans(:,:)=   frac(:,:)*trans(:,:)
     sfc_ir_flx= flx_sfc
 
@@ -356,6 +359,7 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
 !      Save reference dust and ice cloud opacities
 !     These are in units of  opacity/Pa
 !
+!           write out the normalized dust field used by the radiation code
 
     if (id_opac > 0) then
         opac(:,:,:)= dustref(:,:,:) / delp(:,:,:)
@@ -378,8 +382,8 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     if (id_vis_od_dust > 0) used = send_data ( id_vis_od_dust, vis_od_dust,  time, is, js )
 
 
-    !           write out the normalized dust field used by the radiation code
-    opac(:,:,:)= dustref(:,:,:) / delp(:,:,:)
+    !           write out the non-normalized dust field used by the radiation code
+    opac(:,:,:)= dustref(:,:,:) ! / delp(:,:,:)
     if (id_dustref > 0) used = send_data ( id_dustref, opac,  time, is, js )
 
     if (id_dso > 0)then
@@ -388,7 +392,7 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     endif
 
     !           write out the normalized cloud field
-    opac(:,:,:)= cldref(:,:,:) / delp(:,:,:)
+    opac(:,:,:)= cldref(:,:,:) ! / delp(:,:,:)
     if (id_cldref > 0) used = send_data ( id_cldref, opac,  time, is, js )
 
 
@@ -464,6 +468,18 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     endif
     if (id_swdnflx_top > 0)  then
         used = send_data ( id_swdnflx_top, swdnflx(:,:,1),    Time, is, js)
+    endif
+    if (id_irupflx_sfc > 0)  then
+        used = send_data ( id_irupflx_top, irupflx(:,:,kd+1),    Time, is, js)
+    endif
+    if (id_irdnflx_sfc > 0)  then
+        used = send_data ( id_irdnflx_top, irdnflx(:,:,kd+1),    Time, is, js)
+    endif
+    if (id_swupflx_sfc > 0)  then
+        used = send_data ( id_swupflx_top, swupflx(:,:,kd+1),    Time, is, js)
+    endif
+    if (id_swdnflx_sfc > 0)  then
+        used = send_data ( id_swdnflx_top, swdnflx(:,:,kd+1),    Time, is, js)
     endif
 
     tdtlw = heatra
@@ -584,6 +600,7 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                        irnetflx_d,taudust,taucloud,taudust_mom, &
                        lw_heating_band,lw_15umHR,.true., &
                        tstrat(is:ie,js:je), tstrat_dt,taudust_reff, &
+                   taudust_fix,                         &
                        tbands     ) 
 
 
@@ -752,99 +769,99 @@ endif
 null_axis_id = diag_axis_init('scalar_axis', (/0./), 'none', 'X', 'none')
 
 id_areo = register_diag_field ( model, 'areo', (/null_axis_id/),          &
-                                       Time, 'areo', 'degrees', &
+                                       Time, 'Areocentric Longitude', 'deg', &
                                       missing_value=missing_value )
 
-id_insol = register_diag_field ( model, 'insol', axes(1:2),          &
-                                       Time, 'insolation', 'W/m2', &
-                                      missing_value=missing_value )
+!id_insol = register_diag_field ( model, 'insol', axes(1:2),          &
+!                                       Time, 'Solar insolation', 'W/m2', &
+!                                      missing_value=missing_value )
 
 id_ir_flx = register_diag_field ( model, 'sfcirflx', axes(1:2),      &
-                                 Time, 'downward IR flux', 'W/m2', &
+                                 Time, 'surface net downward IR flux', 'W/m2', &
                                        missing_value=missing_value )
 
 id_solar_flx = register_diag_field ( model, 'sfcswflx', axes(1:2),   &
-                                 Time, 'downward SW flux', 'W/m2', &
+                                 Time, 'surface net downward VIS flux', 'W/m2', &
                                        missing_value=missing_value )
 
 id_swheat = register_diag_field ( model, 'swheat', axes(1:3),        &
-                                       Time, 'sw heating', 'K/s', &
+                                       Time, 'visible radiation heating rate', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat = register_diag_field ( model, 'lwheat', axes(1:3),        &
-                                       Time, 'lw heating', 'K/s', &
+                                       Time, 'IR radiation heating rate', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat1 = register_diag_field ( model, 'lwheat1', axes(1:3),        &
-                                       Time, 'lw heating 1', 'K/s', &
+                                       Time, 'IR heating band 1', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat2 = register_diag_field ( model, 'lwheat2', axes(1:3),        &
-                                       Time, 'lw heating 2', 'K/s', &
+                                       Time, 'IR heating band 2', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat3 = register_diag_field ( model, 'lwheat3', axes(1:3),        &
-                                       Time, 'lw heating 3', 'K/s', &
+                                       Time, 'IR heating band 3', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat4 = register_diag_field ( model, 'lwheat4', axes(1:3),        &
-                                       Time, 'lw heating 4', 'K/s', &
+                                       Time, 'IR heating band 4', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat5 = register_diag_field ( model, 'lwheat5', axes(1:3),        &
-                                       Time, 'lw heating 5', 'K/s', &
+                                       Time, 'IR heating band 5', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat6 = register_diag_field ( model, 'lwheat6', axes(1:3),        &
-                                       Time, 'lw heating 6', 'K/s', &
+                                       Time, 'IR heating band 6', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat7 = register_diag_field ( model, 'lwheat7', axes(1:3),        &
-                                       Time, 'lw heating 7', 'K/s', &
+                                       Time, 'IR heating band 7', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat8 = register_diag_field ( model, 'lwheat8', axes(1:3),        &
-                                       Time, 'lw heating 8', 'K/s', &
+                                       Time, 'IR heating band 8', 'K/s', &
                                       missing_value=missing_value )
 
 id_lw15HR = register_diag_field ( model, 'lw15HR', axes(1:3),        &
                                        Time, 'NLTE 15um heating', 'K/s', &
                                       missing_value=missing_value )
 
-id_lwdust = register_diag_field ( model, 'lwdust', axes(1:3),       &
-                                  Time, 'lw dust heating', 'K/s', &
-                                      missing_value=missing_value )
+!id_lwdust = register_diag_field ( model, 'lwdust', axes(1:3),       &
+!                                  Time, 'IR dust heating', 'K/s', &
+!                                      missing_value=missing_value )
 
 id_opac = register_diag_field ( model, 'opac', axes(1:3),            &
-                               Time, 'opacity', 'normalized', &
+                               Time, 'visible dust opacity', 'op/Pa', &
                                       missing_value=missing_value )
 
-id_opacd = register_diag_field ( model, 'opacd', axes(1:3),            &
-                               Time, 'dust opacity', 'normalized', &
+id_opacd = register_diag_field ( model, 'opac_fix', axes(1:3),            &
+                               Time, 'visible fixed dust opacity', 'op/Pa', &
                                       missing_value=missing_value )
 
 id_opac_d = register_diag_field ( model, 'opac_d', axes(1:3),        &
-                    Time, 'diagnostic dust opacity', 'normalized', &
+                    Time, 'visible diagnostic dust opacity', 'op/Pa', &
                                       missing_value=missing_value )
 
 id_vis_od = register_diag_field ( model, 'vis_od', axes(1:2),      &
-                               Time, 'visible opacity', 'total', &
+                               Time, 'visible bin dust opacity', 'total', &
                                       missing_value=missing_value )
 
 id_dustref = register_diag_field ( model, 'dustref', axes(1:3),      &
-                               Time, 'dustref', 'normalized', &
+                               Time, 'visible dust opacity', 'op/level', &
                                       missing_value=missing_value )
 
 id_cldref = register_diag_field ( model, 'cldref', axes(1:3),      &
-                               Time, 'cloudref', 'normalized', &
+                               Time, 'visible water ice cloud opacity', 'op/level', &
                                       missing_value=missing_value )
 
 id_dso = register_diag_field ( model, 'dso', axes(1:3),      &
-                               Time, 'density scaled opacity', 'm2/kg', &
+                               Time, 'visible density scaled dust opacity', 'm2/kg', &
                                       missing_value=missing_value )
 
 id_vis_od_dust = register_diag_field ( model, 'vis_od_dust', axes(1:2), &
-                               Time, 'Dust visible opacity', 'total', &
+                               Time, 'visible fixed dust column opacity', 'total', &
                                       missing_value=missing_value )
 
 id_tdt_rad = register_diag_field ( model, 'tdt_rad', axes(1:3),      &
@@ -852,11 +869,11 @@ id_tdt_rad = register_diag_field ( model, 'tdt_rad', axes(1:3),      &
                                       missing_value=missing_value )
 
 id_ir_flx_d = register_diag_field ( model, 'sfcirflx_d', axes(1:2),  &
-                                 Time, 'downward IR flux', 'W/m2', &
+                                 Time, 'diagnostic net surface downward IR flux', 'W/m2', &
                                        missing_value=missing_value )
 
 id_solar_flx_d = register_diag_field ( model, 'sfcswflx_d', axes(1:2), &
-                                 Time, 'downward SW flux', 'W/m2',  &
+                                 Time, 'diagnostic net surface downward VIS flux', 'W/m2',  &
                                        missing_value=missing_value )
 
 id_alb_d = register_diag_field ( model, 'alb_d', axes(1:2), &
@@ -864,103 +881,119 @@ id_alb_d = register_diag_field ( model, 'alb_d', axes(1:2), &
                                        missing_value=missing_value )
 
 id_swheat_d = register_diag_field ( model, 'swheat_d', axes(1:3),    &
-                                       Time, 'sw heating', 'K/s', &
+                                       Time, 'diagnostic VIS heating', 'K/s', &
                                       missing_value=missing_value )
 
 id_lwheat_d = register_diag_field ( model, 'lwheat_d', axes(1:3),    &
-                                       Time, 'lw heating', 'K/s', &
+                                       Time, 'diagnostic IR heating', 'K/s', &
                                       missing_value=missing_value )
 
 id_irupflx_d = register_diag_field ( model, 'irupflx_d', axes(1:3),&
-                                       Time, 'upwards ir flux diag', 'W/m2', &
+                                       Time, 'diagnostic upwards IR flux diag', 'W/m2', &
                                       missing_value=missing_value )
 
 id_irdnflx_d = register_diag_field ( model, 'irdnflx_d', axes(1:3),&
-                                       Time, 'downwards ir flux diag', 'W/m2', &
+                                       Time, 'diagnostic downwards IRR flux diag', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swupflx_d = register_diag_field ( model, 'swupflx_d',axes(1:3),&
-                                       Time, 'upwards sw flux diag', 'W/m2', &
+                                       Time, 'diagnostic upwards VIS flux diag', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swdnflx_d = register_diag_field ( model, 'swdnflx_d', axes(1:3),&
-                                       Time, 'downwards sw flux diag', 'W/m2', &
+                                       Time, 'diagnostic downwards VIS flux diag', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swnetflx_d = register_diag_field ( model, 'swnetflx_d', axes(1:3),&
-                              Time, 'net sw flux diag', 'W/m2', &
+                              Time, 'diagnostic net VIS flux diag', 'W/m2', &
                               missing_value=missing_value )
 
 id_irnetflx_d = register_diag_field ( model, 'irnetflx_d', axes(1:3),&
-                              Time, 'net ir flux diag', 'W/m2', &
+                              Time, 'diagnostic net IR flux diag', 'W/m2', &
                               missing_value=missing_value )
 
 id_irupflx = register_diag_field ( model, 'irupflx', axes(1:3),&
-                                       Time, 'upwards ir flux', 'W/m2', &
+                                       Time, 'upwards IR flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_irdnflx = register_diag_field ( model, 'irdnflx', axes(1:3),&
-                                       Time, 'downwards ir flux', 'W/m2', &
+                                       Time, 'downwards IR flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swupflx = register_diag_field ( model, 'swupflx',axes(1:3),&
-                                       Time, 'upwards sw flux', 'W/m2', &
+                                       Time, 'upwards VIS flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swdnflx = register_diag_field ( model, 'swdnflx', axes(1:3),&
-                                       Time, 'downwards sw flux', 'W/m2', &
+                                       Time, 'downwards VIS flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swnetflx = register_diag_field ( model, 'swnetflx', axes(1:3),&
-                              Time, 'net sw flux', 'W/m2', &
+                              Time, 'net VIS flux', 'W/m2', &
                               missing_value=missing_value )
 
 id_irnetflx = register_diag_field ( model, 'irnetflx', axes(1:3),&
-                              Time, 'net ir flux', 'W/m2', &
+                              Time, 'net IR flux', 'W/m2', &
                               missing_value=missing_value )
 
 id_irupflx_top = register_diag_field ( model, 'irupflx_top', axes(1:2),&
-                                       Time, 'ToA upwards ir flux', 'W/m2', &
+                                       Time, 'ToA upwards IR flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_irdnflx_top = register_diag_field ( model, 'irdnflx_top', axes(1:2),&
-                                       Time, 'ToA downwards ir flux', 'W/m2', &
+                                       Time, 'ToA downwards IR flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swupflx_top = register_diag_field ( model, 'swupflx_top',axes(1:2),&
-                                       Time, 'ToA upwards sw flux', 'W/m2', &
+                                       Time, 'ToA upwards VIS flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_swdnflx_top = register_diag_field ( model, 'swdnflx_top', axes(1:2),&
-                                       Time, 'ToA downwards sw flux', 'W/m2', &
+                                       Time, 'ToA downwards VIS flux', 'W/m2', &
+                                      missing_value=missing_value )
+
+id_irupflx_sfc = register_diag_field ( model, 'irupflx_sfc', axes(1:2),&
+                                       Time, 'Surface upwards IR flux', 'W/m2', &
+                                      missing_value=missing_value )
+
+id_irdnflx_sfc = register_diag_field ( model, 'irdnflx_sfc', axes(1:2),&
+                                       Time, 'Surface downwards IR flux', 'W/m2', &
+                                      missing_value=missing_value )
+
+id_swupflx_sfc = register_diag_field ( model, 'swupflx_sfc',axes(1:2),&
+                                       Time, 'Surface upwards VIS flux', 'W/m2', &
+                                      missing_value=missing_value )
+
+id_swdnflx_sfc = register_diag_field ( model, 'swdnflx_sfc', axes(1:2),&
+                                       Time, 'Surface downwards VIS flux', 'W/m2', &
                                       missing_value=missing_value )
 
 id_taudust_VIS = register_diag_field ( model, 'taudust_VIS', axes(1:2),&
-                              Time, 'Dust opacity VIS', 'op', &
+                              Time, 'Column dust opacity VIS', 'op', &
                               missing_value=missing_value )
 
 id_taudust_IR = register_diag_field ( model, 'taudust_IR', axes(1:2),&
-                              Time, 'Dust opacity IR', 'op', &
+                              Time, 'Column dust opacity IR', 'op', &
                               missing_value=missing_value )
 
 id_taucloud_VIS = register_diag_field ( model, 'taucloud_VIS', axes(1:2),&
-                              Time, 'Cloud opacity VIS', 'op', &
+                              Time, 'Column cloud opacity VIS', 'op', &
                               missing_value=missing_value )
 
 id_taucloud_IR = register_diag_field ( model, 'taucloud_IR', axes(1:2),&
-                              Time, 'Cloud opacity IR', 'op', &
+                              Time, 'Column cloud opacity IR', 'op', &
                               missing_value=missing_value )
 
 id_trad7 = register_diag_field ( model, 'trad7', axes(1:2),          &
-                               Time, '7mm brightness temp', 'K',   &
+                               Time, '7um brightness temp', 'K',   &
                                       missing_value=missing_value )
 
 id_trad23 = register_diag_field ( model, 'trad23', axes(1:2),      &
-                               Time, '23mm brightness temp', 'K', &
+                               Time, '23um brightness temp', 'K', &
                                       missing_value=missing_value )
 
 id_trad32 = register_diag_field ( model, 'trad32', axes(1:2),      &
-                               Time, '32mm brightness temp', 'K', &
+                               Time, '32um brightness temp', 'K', &
                                       missing_value=missing_value )
 
 allocate( id_taudust_reff_VIS(ndust_mass) )
@@ -975,11 +1008,11 @@ do nt= 1, ndust_mass
     !!! dust effective radius for background lifting
     tname= trim(tracer_name) // '_reff_vis'
     id_taudust_reff_VIS(nt) = register_diag_field ( model, trim(tname), axes(1:2), Time, &
-                      'Radiation taudust VIS by Reff', '',  &
+                      'Radiation taudust VIS by R_eff', '',  &
                        missing_value=missing_value     )
     tname= trim(tracer_name) // '_reff_ir'
     id_taudust_reff_IR(nt) = register_diag_field ( model, trim(tname), axes(1:2), Time, &
-                      'Radiation taudust IR by Reff', '',  &
+                      'Radiation taudust IR by R_eff', '',  &
                        missing_value=missing_value     )
 
 enddo
