@@ -199,8 +199,8 @@ $name
 "radiation",    "areo",         "areo",         "atmos_daily",   "all", .false.,     "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_daily",   "all", .false.,     "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_daily",   "all", .false.,     "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_daily",   "all", .true.,      "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_daily",   "all", .true.,      "none", 2,
+"mars_physics", "delz",         "delz",         "atmos_daily",   "all", .false.,      "none", 2,
+"dynamics",     "delp",         "delp",         "atmos_daily",   "all", .false.,      "none", 2,
 #*********************************************************************************************
 #                               -------  atmos_diurn ----------
 #*********************************************************************************************
@@ -239,6 +239,15 @@ cat > field_table <<EOF
           "longname",     "specific humidity"
           "units",        "kg/kg"
           "type2",        "gas"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "tracer1"
+          "longname",     "dust_tracer"
+          "units",        "none"
+          "aerosol",      "dust_bin",      "radius=0.3",
+          "dust_src",     "fixed",         "assim_source_wgt=0.05",
+          "tracer_src",   "stress_lifting_amp= 0.5",
+          "radtype",      "radval=1",
+          "optics",       "qext=0.98",
           "profile_type", "fixed",         "surface_value=0.0" /
 "TRACER", "atmos_mod",    "dst_mass_mom"
           "longname",     "dust_mass"

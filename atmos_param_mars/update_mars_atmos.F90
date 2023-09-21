@@ -19,6 +19,11 @@ implicit none
 
 public :: pass2, co2_condense, legacy_convect
 
+!---------- shared variables ------
+logical :: mix_tracers = .true.   !hard-coded logical to apply convective adjustment to tracers
+logical :: mix_momentum = .true.  !hard-coded logical to apply convective adjustment to momentum
+
+
 contains
 
 subroutine co2_condense( is, js, dt, Time, temp, dt_t, &
@@ -162,21 +167,21 @@ do k= kmax, 1, -1
                      delp(i,j,k+1)*tnew(i,j,k+1)   )* rfrac(i,j)
                 tnew(i,j,k+1)= tnew(i,j,k) * alf(i,j) 
 
-#ifdef CMIX_TRACERS
-                rnew(i,j,k,:) = (delp(i,j,k  )*rnew(i,j,k,  :) + &
-                       delp(i,j,k+1)*rnew(i,j,k+1,:) )* rfrac2(i,j)
-                rnew(i,j,k+1,:) = rnew(i,j,k,:) 
-#endif CMIX_TRACERS
+                if( mix_tracers ) then
+                    rnew(i,j,k,:) = (delp(i,j,k  )*rnew(i,j,k,  :) + &
+                         delp(i,j,k+1)*rnew(i,j,k+1,:) )* rfrac2(i,j)
+                    rnew(i,j,k+1,:) = rnew(i,j,k,:) 
+                endif
 
-#ifdef CMIX_MOMENTUM
-                unew(i,j,k) = (delp(i,j,k  )*unew(i,j,k  ) + &
-                     delp(i,j,k+1)*unew(i,j,k+1) )* rfrac2(i,j)
-                unew(i,j,k+1) = unew(i,j,k) 
+                if( mix_momentum ) then
+                    unew(i,j,k) = (delp(i,j,k  )*unew(i,j,k  ) + &
+                         delp(i,j,k+1)*unew(i,j,k+1) )* rfrac2(i,j)
+                    unew(i,j,k+1) = unew(i,j,k) 
 
-                vnew(i,j,k) = (delp(i,j,k  )*vnew(i,j,k  ) +  &
-                     delp(i,j,k+1)*vnew(i,j,k+1) )* rfrac2(i,j)
-                vnew(i,j,k+1) = vnew(i,j,k) 
-#endif  CMIX_MOMENTUM
+                    vnew(i,j,k) = (delp(i,j,k  )*vnew(i,j,k  ) +  &
+                         delp(i,j,k+1)*vnew(i,j,k+1) )* rfrac2(i,j)
+                    vnew(i,j,k+1) = vnew(i,j,k) 
+                endif
             endif
         enddo    ! j loop
     enddo    ! i loop
@@ -184,13 +189,12 @@ enddo    ! k loop
 
 dt_t_adj(:,:,:)=  ( tnew(:,:,:) - (temp(:,:,:)+dt_t(:,:,:)*dt) ) / dt 
 
-#ifdef CMIX_TRACERS
-dt_r_adj(:,:,:,:)= ( rnew(:,:,:,:)-(r(:,:,:,:)+ dt_r(:,:,:,:)*dt) ) / dt
-#endif CMIX_TRACERS
-#ifdef CMIX_MOMENTUM
-dt_u_adj(:,:,:)=  ( unew(:,:,:) - (u(:,:,:)+ dt_u(:,:,:)*dt) ) / dt 
-dt_v_adj(:,:,:)=  ( vnew(:,:,:) - (v(:,:,:)+ dt_v(:,:,:)*dt) ) / dt 
-#endif  CMIX_MOMENTUM
+if( mix_tracers ) dt_r_adj(:,:,:,:)= ( rnew(:,:,:,:)-(r(:,:,:,:)+ dt_r(:,:,:,:)*dt) ) / dt
+
+if( mix_momentum ) then
+    dt_u_adj(:,:,:)=  ( unew(:,:,:) - (u(:,:,:)+ dt_u(:,:,:)*dt) ) / dt 
+    dt_v_adj(:,:,:)=  ( vnew(:,:,:) - (v(:,:,:)+ dt_v(:,:,:)*dt) ) / dt 
+endif
 
 end subroutine pass2
 
@@ -457,13 +461,11 @@ do k=1,nz
 end do
 
 dt_t_adj(:,:,:)=  ( tnew(:,:,:) - (temp(:,:,:)+dt_t(:,:,:)*dt) ) / dt 
-#ifdef CMIX_TRACERS
-dt_r_adj(:,:,:,:)= ( rnew(:,:,:,:)-(r(:,:,:,:)+ dt_r(:,:,:,:)*dt) ) / dt
-#endif CMIX_TRACERS
-#ifdef CMIX_MOMENTUM
-dt_u_adj(:,:,:)=  ( unew(:,:,:) - (u(:,:,:)+ dt_u(:,:,:)*dt) ) / dt 
-dt_v_adj(:,:,:)=  ( vnew(:,:,:) - (v(:,:,:)+ dt_v(:,:,:)*dt) ) / dt
-#endif CMIX_MOMENTUM
+if( mix_tracers ) dt_r_adj(:,:,:,:)= ( rnew(:,:,:,:)-(r(:,:,:,:)+ dt_r(:,:,:,:)*dt) ) / dt
+if( mix_momentum ) then
+    dt_u_adj(:,:,:)=  ( unew(:,:,:) - (u(:,:,:)+ dt_u(:,:,:)*dt) ) / dt 
+    dt_v_adj(:,:,:)=  ( vnew(:,:,:) - (v(:,:,:)+ dt_v(:,:,:)*dt) ) / dt
+endif
 
 return
 end subroutine legacy_convect
