@@ -557,7 +557,15 @@ enddo
 
 do nt = 1,ntrace_mom
     if (sedim_indx(nt).gt.0) then
-        sedim_indx(nt) = findloc(mom_indx,sedim_indx(nt),1) 
+!        sedim_indx(nt) = findloc(mom_indx,sedim_indx(nt),1) 
+        do n = 1,ntrace_mom
+          if (sedim_indx(nt).eq.mom_indx(n)) then 
+             sedim_indx(nt)=mom_indx(n)
+             exit
+          else
+             cycle
+          endif
+        enddo
     endif
 enddo
 if(mcpu0)  print *, 'sedimentation indexes are: ',sedim_indx
