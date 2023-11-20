@@ -1,0 +1,581 @@
+#!/bin/bash
+#**************************************************************************************************
+# ========================================= SLURM Settings ==========================================
+#**************************************************************************************************
+#PBS -S /bin/bash
+#PBS -q normal
+#PBS -j oe
+#PBS -l select=3:ncpus=28:model=bro
+#PBS -l walltime=08:00:00
+#PBS -W group_list=s????
+#PBS -M user@email.com
+#PBS -m abe
+#**************************************************************************************************
+# ====================================== Execution Variables  =====================================
+#**************************************************************************************************
+name=fms_mars_bash
+scriptname="$PWD/$name"
+classdir=am4_mars_runs
+workdir="/home/$USER/FMS_MARS_runs/$classdir/$name"
+datadir="$PWD/../src/AmesGCM/data"                  # The data dir
+echo "Datadir =" "$datadir"
+
+platform=intel     # Your platform
+export TILE_LAYOUT=3,2       # 6 * layout 1 * layout 2 <= total requested cpus (select*ncpus)
+model_executable="$PWD/exec.$platform.mars3.1/FMS_MARS.x"           # Path to model
+homedir="$PWD"
+
+export NCX=24        # number of horizontal grid cells per cube face column or row
+export DTA=924       # atmospheric time step
+export NKS=1         # number of vertical remapping per time step
+export NNS=4         # number of advective steps per k
+export NPZ=56        # number of vertical layers
+export NPZ_RST=0         # resolution in restart file
+
+#**************************************************************************************************
+# ========================================== Time Setup  ==========================================
+#**************************************************************************************************
+
+#------ Tells model how long to run. Default = (668 668) is 2 years, 1 year per output file
+dayslist=( 668 668 )   # Number of days per execution.
+num_executions=${#dayslist[@]}    # Number of executions. Each run restarts from previous run.
+
+#------ Define the run type:
+#       RUNTYPE = 0 for COLD start
+#       RUNTYPE = 1 for CONTINUATION warm start
+#       RUNTYPE = 2 for WARM start from file. Use full path including file
+RUNTYPE=0
+restartfile="/nobackup/$USER/FMS_MARS_runs/$classdir/$name/restart/01336.restart.tar"
+
+#**************************************************************************************************
+# ================================= Prepare Initial Conditions  ===================================
+#**************************************************************************************************
+
+#------ Options for editing initial condition fields:
+RESET_DATE=0
+USE_SURFACE_MAPS = 1
+
+#------ Define a list of dust scenarios to use. Each execution will cycle to the next file, then
+#       loop back to the first:
+dust_scenarios=( DustScenario_Background.nc )
+
+#------ Add personalized variables to diag_table.ext and add them here:
+APPEND_EXTERNAL_DIAGTABLE=0
+diagtable_ext="$homedir/diag_table.ext"
+
+#------ Load the appropriate modules for SMCE:
+source "$homedir/../bin/loadmods.bash"
+
+#**************************************************************************************************
+# =================================== Set Up Directory Structure ==================================
+#**************************************************************************************************
+
+#------ Fresh start, clean the dir, just in case
+if [[ $RUNTYPE -eq 0 ]]; then
+    rm -rf "$workdir"
+    mkdir -p "$workdir"
+    cd "$workdir" || exit
+    mkdir -p INPUT RESTART history restart ascii
+    initCond=''
+elif [[ $RUNTYPE -eq 1 ]]; then
+    if [[ -d $workdir ]]; then
+        cd "$workdir" || { echo "Problem with workdir $workdir in runscript"; exit 1; }
+        mkdir -p INPUT RESTART history restart ascii
+    else
+        echo "Problem with workdir $workdir in runscript"
+        exit 1
+    fi
+    initCond=''
+elif [[ $RUNTYPE -eq 2 ]]; then
+    rm -rf "$workdir"
+    mkdir -p "$workdir"
+    cd "$workdir" || { echo "Problem with workdir $workdir in runscript"; exit 1; }
+    mkdir -p INPUT RESTART history restart ascii
+    cp -r "$restartfile" "$workdir/restart/"
+    restart_name=$(basename "$restartfile")  # Get basename (without the path)
+    initCond="$workdir/restart/$restart_name"
+else
+    echo "Problem with RUNTYPE in runscript"
+    exit 1
+fi
+
+#------ Copy this script to RESTART:
+cp $scriptname RESTART/$name
+
+
+#------ Get executable *.x put it in workdir:
+cp $model_executable .
+
+
+#------ Switch back to workdir and set up the diag_table and the namelist input:
+cd $workdir
+/bin/rm diag_table field_table tagging_table input.nml.unexpanded
+
+pes=($(echo "$TILE_LAYOUT" | tr ',' '\n'))
+npes=$((6 * ${pes[0]} * ${pes[1]}))  # Number of processors required. requires select*ncpus >= npes
+NPX=$((NCX + 1))   # number of grid boundaries per column or row is NCX+1            
+export NPX=$NPX
+NORD=3
+if (($NPX > 80)); then
+    NORD=1
+elif (($NPX > 40)); then
+    NORD=2
+fi
+export NORD=$NORD
+#**************************************************************************************************
+# ========================= Set Up Inline and External Diag Tables ================================
+#**************************************************************************************************
+cat <<EOF > diag_table
+$name
+0 0 0 0 0 0
+# Define the output files
+"grid_spec",     -1, "hours",  1, "days", "time",
+"fixed",         -1, "days",   1, "days", "time",
+"atmos_daily",    6, "hours",  1, "days", "time",
+"atmos_average",  5, "days",   1, "days", "time",
+"atmos_diurn",    5, "days",   1, "days", "time",
+#####################
+#------ Format of each column in the diag table:
+# module_name, field_name, output_name, file_name, time_sampling, time_method, spatial_ops, pack
+#
+#------ where time_method = .true. (for time average), max, min, or diurnal24
+#------ where spatial_ops = none (if global field), else 
+#       set "lonmin lonmax latmin latmax presmin presmax" for regional output (pressure mb)
+#*********************************************************************************************
+#                               -------   grid_spec  ----------
+#*********************************************************************************************
+"dynamics",     "grid_lon",     "grid_lon",     "grid_spec",    "all", .false.,      "none", 2,
+"dynamics",     "grid_lat",     "grid_lat",     "grid_spec",    "all", .false.,      "none", 2,
+#*********************************************************************************************
+#                               -------     fixed     ----------
+#*********************************************************************************************
+"dynamics",     "bk",           "bk",           "fixed",        "all", .false.,      "none", 2,
+"dynamics",     "pk",           "ak",           "fixed",        "all", .false.,      "none", 2,
+"dynamics",     "zsurf",        "zsurf",        "fixed",        "all", .false.,      "none", 2,
+"mars_surface", "thin0",        "thin",         "fixed",        "all", .false.,      "none", 2,
+"mars_surface", "alb0",         "alb",          "fixed",        "all", .false.,      "none", 2,
+"mars_surface", "emiss0",       "emis",         "fixed",        "all", .false.,      "none", 2,
+"mars_surface", "gice0",        "gice",         "fixed",        "all", .false.,      "none", 2,
+#*********************************************************************************************
+#                               -------  atmos_average  ----------
+#*********************************************************************************************
+"dynamics",     "bk",           "bk",           "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "pk",           "ak",           "atmos_average", "all", .true.,      "none", 2,
+"radiation",    "areo",         "areo",         "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ps",           "ps",           "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ucomp",        "ucomp",        "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "vcomp",        "vcomp",        "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "temp",         "temp",         "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ukd",          "ukd",          "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "vkd",          "vkd",          "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "tkd",          "tkd",          "atmos_average", "all", .true.,      "none", 2,
+"mars_physics", "stress",       "stress",       "atmos_average", "all", .true.,      "none", 2,
+"mars_surface", "snow",         "snow",         "atmos_average", "all", .true.,      "none", 2,
+"mars_physics", "precip",       "precip",       "atmos_average", "all", .true.,      "none", 2,
+"mars_surface", "ts",           "ts",           "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "t05",          "t05",          "atmos_average", "all", .true.,      "none", 2,
+"radiation",    "taudust_VIS",  "taudust_VIS",  "atmos_average", "all", .true.,      "none", 2,
+"radiation",    "dustref",      "dustref",      "atmos_average", "all", .true.,      "none", 2,
+#*********************************************************************************************
+#                               -------  atmos_daily  ----------
+#*********************************************************************************************
+"dynamics",     "bk",           "bk",           "atmos_daily",   "all", .false.,     "none", 2,
+"dynamics",     "pk",           "ak",           "atmos_daily",   "all", .false.,     "none", 2,
+"radiation",    "areo",         "areo",         "atmos_daily",   "all", .false.,     "none", 2,
+"mars_surface", "ts",           "ts",           "atmos_daily",   "all", .false.,     "none", 2,
+"dynamics",     "ps",           "ps",           "atmos_daily",   "all", .false.,     "none", 2,
+#*********************************************************************************************
+#                               -------  atmos_diurn ----------
+#*********************************************************************************************
+"dynamics",     "bk",           "bk",           "atmos_diurn",   "all", "diurnal24", "none", 2,
+"dynamics",     "pk",           "ak",           "atmos_diurn",   "all", "diurnal24", "none", 2,
+"radiation",    "areo",         "areo",         "atmos_diurn",   "all", "diurnal24", "none", 2,
+"dynamics",     "ps",           "ps",           "atmos_diurn",   "all", "diurnal24", "none", 2,
+"mars_surface"  "ts",           "ts",           "atmos_diurn",   "all", "diurnal24", "none", 2,
+
+EOF
+
+#**************************************************************************************************
+# ====================================== In-line Field Table  =====================================
+#**************************************************************************************************
+
+cat <<EOF > field_table
+"TRACER", "atmos_mod",    "dummy_tracer"
+          "longname",     "dummy tracer to bypass moist adjustments in dycore"
+          "units",        "kg/kg"
+          "type2",        "gas"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "h2o_vapor"
+          "longname",     "specific humidity"
+          "units",        "kg/kg"
+          "type2",        "gas"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "tracer1"
+          "longname",     "dust_tracer"
+          "units",        "none"
+          "aerosol",      "dust_bin",      "radius=0.3",
+          "dust_src",     "fixed",         "assim_source_wgt=0.05",
+          "tracer_src",   "stress_lifting_amp= 0.5",
+          "radtype",      "radval=1",
+          "optics",       "qext=0.98",
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "dst_mass_micro"
+          "longname",     "dust_mass"
+          "units",        "none"
+          "type",         "microphys"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "dst_num_micro"
+          "longname",     "dust_number"
+          "units",        "none"
+          "type",         "microphys"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "ice_mass_micro"
+          "longname",     "ice_mass"
+          "units",        "none"
+          "type",         "microphys"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "ice_num_micro"
+          "longname",     "ice_number"
+          "units",        "none"
+          "type",         "microphys"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "cor_mass_micro"
+          "longname",     "dust_core_mass"
+          "units",        "none"
+          "type",         "microphys"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "vap_mass_micro"
+          "longname",     "vapor_mass"
+          "units",        "none"
+          "type",         "microphys"
+          "type2",        "gas"
+          "profile_type", "fixed",         "surface_value=0.0" /
+"TRACER", "atmos_mod",    "ice_cloud"
+          "longname",     "ice_mass_bin"
+          "aerosol",      "ice_bin",       "radius=4.0",
+          "units",        "none",
+          "tracer_src",   "stress_lifting_amp= 0.5",
+          "radtype",      "radval=1",
+          "optics",       "qext=0.98" /
+EOF
+
+
+cat <<'EOF' > input.nml.unexpanded
+
+!**************************************************************************************************
+! ======================================== Model Namelists ========================================
+!**************************************************************************************************
+
+ &fv_core_nml
+    layout          = $TILE_LAYOUT  ! Layout of processor: total cpu core = 6*layout1*layout2
+    reference_sfc_pres = 7.05e2,    ! Reference sfc pressure for nominal vertical grid in output [Pa]
+    p_ref           = 7.05e2,       ! Reference sfc pressure [Pa] used to define vertical grid aks
+    dry_mass        = 7.05e2,       ! Initial co2 mass [Pa]
+    npx             = $NPX,         ! Number of cell boundaries per tile, x-direction. Resolution is ~360/4*22
+    npy             = $NPX,         ! Number of cell boundaries per tile, y-direction. Resolution is ~360/4*22
+    npz             = $NPZ,         ! Number of vertical layers to use; tabulates ak, bk values specified
+                                    !   in FV_eta.F90
+    npz_rst         = $NPZ_RST      ! If nonzero, specifies number of vertical layers in the restart file.
+                                    !   Default = 0
+    ntiles          = 6,            ! Number of tiles that make up the globe. Default = 6
+    k_split         = $NKS,         ! Frequency (per timestep [DTA; dt_atmos]) of vertical remapping.
+                                    !   Double if resolution is doubled
+    n_split         = $NNS,         ! Frequency (per k_split) of advective timestep
+    fill            = .true.        ! Flag: Fill negative tracers
+    n_sponge        = 0,            ! Number of dynamic sponge layers
+    d2_bg_k1        = 0.2,          ! Sponge layer del-2 divergence factor 1
+    d2_bg_k2        = 0.04,         ! Sponge layer del-2 divergence factor 2
+    nord            = $NORD,            ! Divergence damping order (3 is del-8).
+                                    !   = 3 for c24
+                                    !   = 2 for c48
+                                    !   = 1 for c96+
+    d4_bg           = 0.15,         ! Coefficient for background del-4(6) divergence damping
+    d_ext           = 0.00,         ! Coefficient for external (barotropic) mode damping. Default is 0.02
+    print_freq      = -1,           ! Frequency for the diagnostics integral in the ascii output files
+    beta            = 0.2,          ! Bluntness of topographic features
+    kord_tm         = -10,          ! Controls the order of the advection scheme for various variables
+    kord_mt         = 10,           ! Vertical mapping option for U, V
+    kord_wz         = 10,           ! Vertical mapping option for W
+    kord_tr         = 10,           ! Vertical mapping option for tracers
+    hord_mt         = 10,           ! Horizontal transport option for U, V
+    hord_tm         = 10,           ! Horizontal transport option for T
+    hord_vt         = 10,           ! Horizontal transport option for vort
+    hord_dp         = 10,           ! Horizontal transport option for delp
+    nwat            = 0,            ! Number of water constituents
+/
+
+ &main_nml
+        days        = $days,        ! Number of days to simulate in this run (set using dayslist)
+        dt_atmos    = $DTA          ! Physics timestep [sec]. Use integer sec between 2 timesteps.
+                                    !   Dynamical timestep then = dt_atmos/(nsplit * ksplit)
+/
+
+!**************************************************************************************************
+! ======================================== Physics Namelists ======================================
+!**************************************************************************************************
+
+ &mars_physics_nml
+    do_co2_condensation_cycle = T,  ! Flag: Do mass feedback from CO2 condensation (atm+srf)
+    do_co2_condensation       = T,  ! Flag: CO2 condensation T adjustment in the atmosphere,
+                                    !   deposited at sfc. Allows latent heating to be toggled.
+                                    !   CO2 cycle controlled by 3 variables; 2 in mars_physics. 
+                                    !   If do_co2_condesnation_cycle = F, CO2 cap formation still
+                                    !   allowed, it influences T and albedos, but mass source/sink
+                                    !   does not affect the pressure cycle.
+/
+
+ &surface_data_nml
+      do_co2_condensation     = T,  ! Flag: CO2 condensation at sfc. Maintains sfc T at or above Tcrit
+/
+
+!**************************************************************************************************
+! ======================================= Aerosols Namelists ======================================
+!**************************************************************************************************
+
+ &aerosol_util_nml
+
+/
+
+ &aerosol_nml
+    do_inpt_dust_cycle        = T,  ! Flag: Read dust scenario from an input file for lifting
+    conrath_type              = 1,  ! Conrath vertical extent.
+                                    !   0 = Conventional Conrath top
+                                    !   1 = Conrath with scaled ztop
+/
+
+!**************************************************************************************************
+! =================================== Radiative Transfer Namelists ================================
+!**************************************************************************************************
+
+ &ames_rtmod_nml
+       radactive_dust_TOG     = 3,  ! Toggle for Rad-Active dust
+                                    !   0 for clear
+                                    !   1 not supported
+                                    !   2 not supported
+                                    !   3 prescribed fixed (defined by aerosol_nml flags)
+/
+
+!**************************************************************************************************
+! =================================== FV3 Internal Namelists ======================================
+!**************************************************************************************************
+
+ &fms_nml
+        clock_grain           = "LOOP",     ! Performance timer, default = loop level
+        domains_stack_size    = 8000000,    ! Number of words of MPP_DOMAINS user stack
+        print_memory_usage    = .true.,     ! Prints memory usage stats to the fms.out file
+/
+
+ &diag_manager_nml
+        issue_oor_warnings    = F,
+/
+
+ &test_case_nml
+        test_case   = 10            !  Topography type. 11= Mars topo; 10= flat topo
+/
+
+EOF
+
+#**************************************************************************************************
+# ======================== Ready to Begin Loop Execution Over Run Cycles  =========================
+#**************************************************************************************************
+
+#------ Copy the INPUT dir to see its state at the very first call:
+if [[ $RUNTYPE -eq 0 ]]; then
+   rm -rf $workdir/INPUT_cold
+   cp -r $workdir/INPUT $workdir/INPUT_cold
+fi
+
+#------ Set path to timestamp.sh:
+time_stamp="$homedir/time_stamp.sh"
+echo "time_stamp = $time_stamp"
+
+#------ Directory names for data archival on LFE:
+LHOME="/u/$USER"
+LRUN="$LHOME/FV3/xanadu/$classdir/$name"
+HIST_DIR="$LRUN/history"
+RESTART_DIR="$LRUN/restart"
+ASCII_DIR="$LRUN/ascii"
+
+#------ The following supports expansion of namelist file (input.nml) contained in shell variables
+#------ Convert into fully resolved namelist:
+expandVariables="$homedir/../src/FRE/sbin/expand_variables"
+FRE_JOBID="$(basename "$0").o$(date +%s)"
+envFile="/tmp/shell.variables.$FRE_JOBID"
+envFileDelay=2
+
+#------ Get boundary Data (topo, albedo, TI dust scenario etc), copy to INPUT:
+cd "$workdir/INPUT"
+
+#------ Copy files for radiation:
+cp "$datadir/CO2H2O_"* .
+cp "$datadir/waterCoated_vis_"* .
+cp "$datadir/waterCoated_ir_"* .
+cp "$datadir/Dust_vis_wolff2010_"* .
+cp "$datadir/Dust_ir_wolff2010_"* .
+
+cp "$datadir/DustQ_Tbright_MK.dat" DustQ_Tbright_MK.dat
+cp "$datadir/waterCoatedQ_Tbright_MK.dat" waterCoatedQ_Tbright_MK.dat
+
+#------ Copy hi-res topography, TI, albedo, and surface emissivity:
+cp "$datadir/mars_topo_mola16.nc" mars_topo.nc
+if [[ $USE_SURFACE_MAPS -eq 1 ]]; then
+    cp $datadir/mars_thermal_inertia8_2011.nc       thermal_inertia.nc
+    cp $datadir/mars_TES_albedo8_new.nc             albedo.nc
+    cp $datadir/mars_sfc_emissivity8.nc             sfc_emiss.nc
+fi
+cp "$datadir/GRS_interp16.nc" GRS_interp16.nc
+cp "$datadir/npcflag8.nc" npcflag8.nc
+
+#------ Copy specified restart file to INPUT if requesting a warm start:
+if [[ $RUNTYPE -eq 2 ]]; then
+    # Test file existence first
+    if [[ -f $initCond ]]; then
+        tar -xf "$initCond"
+        echo "tar done in $initCond"
+    else
+       echo "$restartfile does not exist, ABORTING RUN"
+       exit 1
+    fi
+else
+    /bin/rm INPUT/*.res INPUT/*.res.nc INPUT/*.res.nc.0??? INPUT/*.res.tile?.nc INPUT/*.res.tile?.nc.0???
+fi
+#**************************************************************************************************
+# =========================== Operations on the Initial Conditions ================================
+#**************************************************************************************************
+
+#------ Below is an example of resetting the model day number to XX:
+if [[ $RESET_DATE -ne 0 ]]; then
+    /bin/rm -f atmos_model.res
+    cat <<EOF > atmos_model.res
+     0     0   000     0     0     0        Current model time: year, month, day, hour, minute, second
+EOF
+fi
+
+
+#------ Eliminate restart files with old vertical level dependencies:
+if [[ $NPZ_RST -ne 0 ]]; then
+    echo "Eliminate myturb restart files "
+    /bin/rm -f my25_turb*nc
+    /bin/rm -f radiation.res*nc
+    /bin/rm -f physics.res*nc
+fi
+
+#**************************************************************************************************
+# ================================= Prepare the Run for Execution  ================================
+#**************************************************************************************************
+
+cd "$workdir"
+
+irun=1
+numdust=${#dust_scenarios[@]}
+dscen=0
+ulimit -s unlimited
+
+if [[ $numdust -eq 0 ]]; then
+    dust_scenarios=( DustScenario_Background.nc )
+    echo "No dust scenario chosen, defaulting to background"
+fi
+
+while [[ $irun -le $num_executions ]]; do
+
+    if [[ $irun -gt 1 ]]; then
+        export NPZ_RST=0
+    fi
+
+    cp "$datadir/${dust_scenarios[$dscen]}" "$workdir/INPUT/dust_cycle.nc"
+    echo "Copied Dust Scenario ${dust_scenarios[$dscen]}"
+
+    if [ $(expr $irun % $numdust) == "0" ]; then
+        dscen=-1
+    fi
+    (( dscen++ ))
+
+    days=${dayslist[$irun-1]}
+    export days=$days
+
+    env | sort > "$envFile"
+    sleep $envFileDelay
+    set -r | sort >> "$envFile"
+    sleep $envFileDelay
+    env --unset=TERMCAP | sort >> "$envFile"
+#    #remove problematic line
+    sed -i '/^}*$/d' $envFile
+    sed -i '/BASH_FUNC_module/d' $envFile
+    #------ Convert $days in input into the value set in $dayslist
+    "$expandVariables" "$envFile" < input.nml.unexpanded > input.nml || exit 1
+
+    rm -f "$envFile"
+
+    #------ Append external diag table:
+    if [[ $APPEND_EXTERNAL_DIAGTABLE -ne 0 ]]; then
+        cat "$diagtable_ext" >> diag_table
+        APPEND_EXTERNAL_DIAGTABLE=0
+    fi
+    #----------------------------------------------------------------------------------------------
+    #------ Run the model with mpiexec
+    jobid=$(echo "$SLURM_JOB_ID" | awk -F . '{print $1}')
+
+    mpiexec -np "$npes" ./"${model_executable##*/}" >& fms_mars_out."$jobid"     # error output file
+
+    #  mpiexec -np $npes ./${model_executable##*/}
+    if [[ $? -ne 0 ]]; then
+        echo "Error in execution of $PWD/${model_executable##*/}"
+        scancel $SLURM_JOB_ID
+        exit 1
+    fi
+    #----------------------------------------------------------------------------------------------
+    date_name=$("$time_stamp" -b -f "days")
+    date_name_end=$("$time_stamp" -e -f "days")
+    echo 'date_name=' "$date_name"
+    echo 'date_name_end=' "$date_name_end"
+    echo 'days=' "$days"
+    for outfile in logfile.000000.out time_stamp.out fms_mars_out.*; do
+        export base=${outfile%.*}
+    done
+
+    #------ Write status reports in ascii
+    mv fms_mars_out."$jobid"  ascii/"$date_name".fms_mars.out
+    mv time_stamp.out       ascii/"$date_name".time_stamp.out
+    mv logfile.000000.out   ascii/"$date_name".logfile.out
+
+    #----------------------------------------------------------------------------------------------
+    #------ Gather restart files into a single tar file. Move tar file to restart directory for 
+    #       eventual archival
+    cd "$workdir/RESTART"
+    tar -cf restart.tar *.res *.res.nc *.res.nc.0???  *.res.tile?.nc *.res.tile?.nc.0???
+    mv restart.tar  ../restart/"$date_name_end".restart.tar
+
+    #----------------------------------------------------------------------------------------------
+    #------ Gather history files into a single tar file. Move tar file to history directory for
+    #       eventual archival
+
+    cd "$workdir"
+
+    tar -cf history.tar  *.nc
+    mv history.tar  ./history/"$date_name".nc.tar
+    rm -f "$date_name"*.nc
+
+    #------ Prepare to run the model again: move files in RESTART to INPUT
+    cd "$workdir"
+    /bin/rm INPUT/*.res   INPUT/*.res.nc   INPUT/*.res.nc.0???   INPUT/*.res.tile?.nc   INPUT/*.res.tile?.nc.0???
+    mv  RESTART/*.res RESTART/*.res.nc RESTART/*.res.nc.0??? RESTART/*.res.tile?.nc RESTART/*.res.tile?.nc.0??? INPUT
+
+    set echo
+    #----------------------------------------------------------------------------------------------
+
+    (( irun++ ))
+
+done
+
+#------ Backup output to Lou (NAS only)
+pbs_release_nodes -j $PBS_JOBID -a
+ssh -q pfe "ssh -q lou mkdir -p $ASCII_DIR"
+ssh -q pfe "ssh -q lou scp -q $workdir/ascii/*  $ASCII_DIR/."
+ssh -q pfe "ssh -q lou mkdir -p $RESTART_DIR"
+ssh -q pfe "ssh -q lou scp -q $workdir/restart/*.restart.tar  $RESTART_DIR/."
+ssh -q pfe "ssh -q lou mkdir -p $HIST_DIR"
+ssh -q pfe "ssh -q lou scp -q $workdir/history/*.nc.tar  $HIST_DIR/."
+ssh -q pfe "ssh -q lou scp -q $homedir/$name  $ASCII_DIR/."
+
+exit 0
+
