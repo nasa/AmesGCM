@@ -4861,10 +4861,10 @@ if (do_cia) then
     open(72,file=trim(rtdata_path)//'khbar_8band_T20_100_800.dat',form='formatted') !Turbet et al. (2020)
 !    open(72,file=trim(rtdata_path)//'khbar_8band_W17_100_800.dat',form='formatted') ! Wordsworth et al. (2017)
     do nw=1,L_NSPECTI
-        read(70,666) (kgbar_tab(nw,j),j=1,15)
-        read(71,666) (kbbar_tab(nw,j),j=1,15)
-        read(72,666) (khbar_tab(nw,j),j=1,15)
-  666   format(1x,15(1pe13.3))
+        read(70,656) (kgbar_tab(nw,j),j=1,15)
+        read(71,656) (kbbar_tab(nw,j),j=1,15)
+        read(72,656) (khbar_tab(nw,j),j=1,15)
+  656   format(1x,15(1pe13.3))
     end do
     close(70)
     close(71)
