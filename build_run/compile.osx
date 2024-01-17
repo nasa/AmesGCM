@@ -13,35 +13,22 @@ set listpaths = $cwd/../src/mkmf/bin/list_paths
 
 setenv NETCDF "/opt/local"
 setenv NETCDFPATH "/opt/local"
-setenv GCC_PATH "/opt/local/bin"
+#setenv GCC_PATH "/usr/bin"           #if downloaded with developer tools
+setenv GCC_PATH "/opt/local/bin"     #if downloaded with macports 
 setenv MPI_INC "/opt/local/include/openmpi-gcc11"
 setenv MPI_LIB "/opt/local/lib/openmpi-gcc11"
 
 ##set the pre-compiler defs for the model.
 ##include -DMARS_GDIAGS for global diagnostics output. compiling will take longer
 ##include RELEASE for release version compile
-##use optim = bridge for Sandy Bridge or Ivy Bridge processors
-##use optim = well for Haswell or Broadwell processors
-##leave optim blank for generic processors
-set optim = ""
 set cppDefs = "-DMARS_GCM -DMARS_SURFACE -DRELEASE"
 
 #--------------------------------------------------------------------------------------------------------
-set execdir = $cwd/exec.$platform.mars3.0  # where code is compiled and executable is created
+set execdir = $cwd/exec.$platform.mars3.1  # where code is compiled and executable is created
 set execname = FMS_MARS.x
 set executable = $execdir/$execname
 
-#source $cwd/../bin/loadmods.csh
-
 setenv NC_BLKSZ 64K
-
-#--------------------------------------------------------------------------------------------------------
-#choose the template file based on optimization flag
-if ( "$optim" =~ *well ) then
-set template = $cwd/../bin/mkmf.template.$platform.avx
-else if ( "$optim" =~ *bridge ) then
-set template = $cwd/../bin/mkmf.template.$platform.avx2
-endif
 
 #--------------------------------------------------------------------------------------------------------
 # setup directory structure
