@@ -3,7 +3,7 @@
 The NASA Ames Mars Global Climate Model (GCM) is developed and released by the Mars Climate Modeling Center (MCMC) at NASA's Ames Research Center. The GCM simulates the atmosphere and climate of the planet Mars using an external finite volume dynamical core to predict the global atmospheric state given various planetary parameters and physical parameters. This software package includes only the physical processes and patches to interface with the external model, as the dynamical core is a third party software package available on the [NOAA-GFDL repository](https://github.com/NOAA-GFDL/GFDL_atmos_cubed_sphere) developed by the Geophysical Fluid Dynamics Laboratory (GFDL) at the National Oceanic and Atmospheric Administration (NOAA).
 
 ## User Guide
-A [user guide](docs/NASA_Ames_Mars_GCM_3_0_User_Guide.pdf) is included that describes the basic instructions for downloading, installing, and running the model. Also included are postprocessing instructions, brief descriptions of the physics, input files and namelist options, and some tips for troubleshooting.
+A [user guide](docs/NASA_Ames_Mars_GCM_3_1_User_Guide.pdf) is included that describes the basic instructions for downloading, installing, and running the model. Also included are postprocessing instructions, brief descriptions of the physics, input files and namelist options, and some tips for troubleshooting.
 
 ## More Information
 For additional information about the MCMC, please refer to our [website](https://www.nasa.gov/mars-climate-modeling-center-ames).
