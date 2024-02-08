@@ -470,16 +470,16 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
         used = send_data ( id_swdnflx_top, swdnflx(:,:,1),    Time, is, js)
     endif
     if (id_irupflx_sfc > 0)  then
-        used = send_data ( id_irupflx_top, irupflx(:,:,kd+1),    Time, is, js)
+        used = send_data ( id_irupflx_sfc, irupflx(:,:,kd+1),    Time, is, js)
     endif
     if (id_irdnflx_sfc > 0)  then
-        used = send_data ( id_irdnflx_top, irdnflx(:,:,kd+1),    Time, is, js)
+        used = send_data ( id_irdnflx_sfc, irdnflx(:,:,kd+1),    Time, is, js)
     endif
     if (id_swupflx_sfc > 0)  then
-        used = send_data ( id_swupflx_top, swupflx(:,:,kd+1),    Time, is, js)
+        used = send_data ( id_swupflx_sfc, swupflx(:,:,kd+1),    Time, is, js)
     endif
     if (id_swdnflx_sfc > 0)  then
-        used = send_data ( id_swdnflx_top, swdnflx(:,:,kd+1),    Time, is, js)
+        used = send_data ( id_swdnflx_sfc, swdnflx(:,:,kd+1),    Time, is, js)
     endif
 
     tdtlw = heatra
