@@ -18,5 +18,6 @@ cp -r build_run/bin ../../
 cp build_run/compile.archives ../../exec
 cp build_run/diag_table.ext ../../exec
 cp build_run/fms_mars_default_v3.1 ../../exec
+cp build_run/fms_earlymars_500mb_v3.1 ../../exec
 
 exit 0
