@@ -109,7 +109,7 @@ module load mpi-hpe/mpt
 module load hdf4/4.2.12
 module load hdf5/1.8.18_mpt
 module load netcdf/4.4.1.1_mpt
-module load pkgsrc/2018Q3
+module load pkgsrc
 module load nco/4.6.7
 
 limit stacksize unlimited
