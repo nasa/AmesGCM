@@ -135,9 +135,7 @@ pushd atmos_cubed
 
 
 /bin/mv pathnames_atmos_cubed pathnames.all
-grep -v "atmos_cubed_sphere/driver/GFDL/.*"  pathnames.all  > pathnames_atmos_cubed
-/bin/mv pathnames_atmos_cubed pathnames.all
-grep -v "atmos_cubed_sphere/driver/SHiELD/.*"  pathnames.all  > pathnames_atmos_cubed
+grep -v "atmos_cubed_sphere/driver/.*"  pathnames.all  > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
 grep -v ".*cmip.*" pathnames.all > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all

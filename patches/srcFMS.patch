@@ -1,5 +1,5 @@
 diff --git a/astronomy/astronomy.F90 b/astronomy/astronomy.F90
-index e8366c37..c94f8cd3 100644
+index e8366c37..3c4f2cf6 100644
 --- a/astronomy/astronomy.F90
 +++ b/astronomy/astronomy.F90
 @@ -33,6 +33,8 @@
@@ -50,7 +50,18 @@ index e8366c37..c94f8cd3 100644
  
  !--------------------------------------------------------------------
  !------   public data ----------
-@@ -427,6 +454,7 @@ integer :: unit, ierr, io, seconds, days, jd, id
+@@ -368,8 +395,9 @@ real, dimension(:), allocatable :: orb_angle !< table of orbital positions (0 to
+                                              !! 2*pi) as a function of time  used
+                                              !! to find actual orbital position
+                                              !! via interpolation
+-
++#ifndef MARS_GCM
+ real    :: seconds_per_day=86400.   !< seconds in a day
++#endif
+ real    :: deg_to_rad               !< conversion from degrees to radians
+ real    :: twopi                    !< 2 *PI
+ logical :: module_is_initialized=.false. !< has the module been initialized ?
+@@ -427,6 +455,7 @@ integer :: unit, ierr, io, seconds, days, jd, id
        call time_manager_init
        call constants_init
  
@@ -58,7 +69,7 @@ index e8366c37..c94f8cd3 100644
  !-----------------------------------------------------------------------
  !>    Read namelist.
  !-----------------------------------------------------------------------
-@@ -499,6 +527,22 @@ integer :: unit, ierr, io, seconds, days, jd, id
+@@ -499,6 +528,22 @@ integer :: unit, ierr, io, seconds, days, jd, id
          total_pts = jd*id
        endif
  
@@ -81,7 +92,7 @@ index e8366c37..c94f8cd3 100644
  !---------------------------------------------------------------------
  !>    Mark the module as initialized.
  !---------------------------------------------------------------------
-@@ -2242,6 +2286,353 @@ real                        :: t
+@@ -2242,6 +2287,353 @@ real                        :: t
  
  end function universal_time
  

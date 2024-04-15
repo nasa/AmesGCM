@@ -146,9 +146,7 @@ pushd atmos_cubed
 
 
 /bin/mv pathnames_atmos_cubed pathnames.all
-egrep -v "atmos_cubed_sphere/driver/GFDL/*"  pathnames.all  > pathnames_atmos_cubed
-/bin/mv pathnames_atmos_cubed pathnames.all
-egrep -v "atmos_cubed_sphere/driver/SHiELD/*"  pathnames.all  > pathnames_atmos_cubed
+egrep -v "atmos_cubed_sphere/driver/*"  pathnames.all  > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
 egrep -v "*cmip*" pathnames.all > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
