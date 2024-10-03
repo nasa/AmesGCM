@@ -19,7 +19,7 @@ use   mpp_domains_mod, only: domain2d
 use        fms_io_mod, only: register_restart_field, restart_file_type, &
                              save_restart, restore_state, get_mosaic_tile_file
 
-use  aerosol_util_mod, only: do_moment_water
+use  aerosol_util_mod, only: do_moment_water, do_bulk_water
 
 use  time_manager_mod, only: time_type, get_time
 
@@ -34,8 +34,11 @@ implicit none
 !---------- interfaces ------------
 
 public :: mars_surface_init, mars_surface_end,  progts, sfc_snow, sfc_frost, &
-         sfc_frost_mom, sfc_h2o2_chem, id_sfc_h2o2_chem
+         sfc_frost_mom, sfc_frost_blk, sfc_h2o2_chem, id_sfc_h2o2_chem, &
+         cumulative_prec_blk
 
+!-----------------------------------------------------------------------
+!-------------------- namelist -----------------------------------------
 
 integer :: nlayers = 16                 !  number of soil layers
 integer :: nlay_rst = 0                 !  number of soil layers in restart
@@ -56,11 +59,13 @@ real :: emiss_ice_sp = 0.88             !  Southern CO2 ice emissivity
 
 real :: alpha = 0.5                   !  parameter for surface temp calculation (0.5 = semi implicit, 0.0 = fully explicit, 1.0 = fully implicit)
 real :: albedo_h2o = 0.4                ! h2o ice albedo if do_waterice_albedo
+real :: albedo_h2o_liquid = 0.07        ! liquid water albedo
 real :: emiss_h2o = 1.0                 ! h2o ice emissivity if do_waterice_albedo 
 
 logical :: do_co2_condensation= .true.  !  Maintain surface temperature at or above Tcrit
 
 logical :: do_subsfc_ice=   .true.      !  Include influence of subsurface water ice on thermal diffusivity
+real :: init_sfc_frost= 500.         !  Initial surface frost value (units?)
 logical :: edit_subsfc_temp= .false.    !  change subsurface temperatures after initialization
 integer :: subsfc_ice_case = 7          !  subsurface ice distribution scenario
 logical :: use_legacy_soil = .false.    !  use legacy soil rho cp values
@@ -85,7 +90,6 @@ real  :: cp_legacy_soil  =  840.00      !  legacy soil heat capacity
 real  :: rho_co2    = 910.0             !  CO2 ice density [kg/m^3]
 real  :: cp_co2     = 1075.0            !  CO2 ice specific heat
 
-
 real, dimension(:), allocatable    ::   delzg, &                        !  soil layer thicknesses [m]
                                         zgrid, zgrid_r                  !  soil boundary depths [m]
 
@@ -97,6 +101,8 @@ real, dimension(:,:),     allocatable, save  ::  sfc_emiss              !  map o
 real, dimension(:,:),     allocatable, save  ::  sfc_snow               !  (CO2)
 real, dimension(:,:,:),     allocatable, save  ::  sfc_frost            !  (water)
 real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_mom      !  (water)
+real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_blk      !  (water)
+real, dimension(:,:,:),     allocatable, save  ::  cumulative_prec_blk  !  (cumulative precipitation bulk scheme)
 real, dimension(:,:),     allocatable, save  ::  sfc_h2o2_chem          !  (h2o2)
 real, dimension(:,:),     allocatable, save  ::  sfc_roughness          !  map of surface roughness
 real, dimension(:,:),     allocatable, save  ::  sfc_topo               !  map of surface topography
@@ -130,13 +136,10 @@ logical :: module_is_initialized = .false.
 
 integer, dimension(:),   allocatable, save  ::  id_frost_mom
 integer  :: id_sfc_h2o2_chem
-integer  ::  id_zgrid, id_subsfc, id_ts, id_thin, id_frost, id_snow, id_sflux
-integer  ::  id_alb
+integer  ::  id_zgrid, id_subsfc, id_ts, id_thin, id_frost, id_frost_blk,id_snow, id_sflux
+integer  ::  id_alb, id_cprecip_blk
 
 logical ::   mcpu0
-
-!-----------------------------------------------------------------------
-!-------------------- namelist -----------------------------------------
 
 namelist /surface_data_nml/  zoland, drag_cnst, soil_ti, soil_temp, &
                             do_co2_condensation,                    &
@@ -148,9 +151,8 @@ namelist /surface_data_nml/  zoland, drag_cnst, soil_ti, soil_temp, &
                             edit_subsfc_temp, rescale_sh_ti,        &
                             nlayers,do_waterice_albedo,use_legacy_soil, &
                             alpha, albedo_h2o, emiss_h2o,nlay_rst,d2is, &
-                            gk1,gk2,use_equilibrated_ts
-
-!-----------------------------------------------------------------------
+                            gk1,gk2,use_equilibrated_ts,            &
+                            init_sfc_frost,albedo_h2o_liquid
 
 contains
 
@@ -216,6 +218,8 @@ allocate (  t_surf         (id,jd)  )
 allocate (  sfc_snow       (id,jd)  )
 allocate (  sfc_frost      (id,jd,1)  )
 allocate (  sfc_frost_mom      (id,jd,nice_mass)  )
+allocate (  sfc_frost_blk  (id,jd,1)  )
+allocate (  cumulative_prec_blk  (id,jd,3)  )
 allocate (  sfc_h2o2_chem  (id,jd)  )
 allocate (  sfc_roughness  (id,jd)  )
 allocate (  sfc_topo       (id,jd)  )
@@ -332,13 +336,16 @@ else
     endif
 
     sfc_snow(:,:)= 0.0
+    cumulative_prec_blk(:,:,:)= 0.0
     do nt=1, nice_mass
         where( lat > 80.0*pi/180.0 )
-            sfc_frost(:,:,1)= 500.0
-            sfc_frost_mom(:,:,nt)= 500.0
+            sfc_frost(:,:,1)= init_sfc_frost
+            sfc_frost_mom(:,:,nt)= init_sfc_frost
+            sfc_frost_blk(:,:,1)= init_sfc_frost
         elsewhere
             sfc_frost(:,:,1)= 0.0
             sfc_frost_mom(:,:,nt)= 0.0
+            sfc_frost_blk(:,:,1)= 0.0
         end where
     enddo
     soil_icex(:,:,:)= 0.0
@@ -390,6 +397,16 @@ id_thin = register_diag_field ( mod_name, 'thin',                  &
 id_frost = register_diag_field ( mod_name, 'frost',                &
                                  (/axes(1:2)/), Time,             &
                                 'Surface water ice for bulk microphysics', 'kg/m/m',    &
+                                 missing_value=missing_value )
+
+id_frost_blk = register_diag_field ( mod_name, 'frost_blk',                &
+                                 (/axes(1:2)/), Time,             &
+                                'Surface water ice for new bulk microphysics', 'kg/m/m',    &
+                                 missing_value=missing_value )
+
+id_cprecip_blk = register_diag_field ( mod_name, 'cprecip_blk',                &
+                                 (/axes(1:2)/), Time,             &
+                                'Cumulative precipitation bulk microphysics', 'kg/m/m',    &
                                  missing_value=missing_value )
 
 id_sfc_h2o2_chem = register_diag_field ( mod_name, 'sfc_h2o2_chem', &
@@ -618,11 +635,13 @@ if( (file_exists( trim( filename ) ))  ) then
 !!----reset the surface water ice to follow the npc flag file----!!
         do nt=1,nice_mass
             where (npcflag .gt. 0.5)
-                sfc_frost_mom(:,:,nt) = 500.
-                sfc_frost(:,:,1) = 500.
+                sfc_frost_mom(:,:,nt) = init_sfc_frost
+                sfc_frost(:,:,1) = init_sfc_frost
+                sfc_frost_blk(:,:,1) = init_sfc_frost
             elsewhere
                 sfc_frost_mom(:,:,nt) = 0.
                 sfc_frost(:,:,1) = 0.
+                sfc_frost_blk(:,:,1) = 0.
             end where
         enddo
     endif
@@ -666,7 +685,7 @@ end subroutine mars_surface_init
 
 
 subroutine progts( is, js, dt, Time, lon, lat, ps,  phalf, dnflx, tgrnd, snowin, subday, tg_dt, &
-                     shflx, dsens_datmos, dsens_dsurf, evap, devap_datmos, devap_dsurf )
+                     shflx, dsens_datmos, dsens_dsurf, evap, devap_datmos, devap_dsurf)
 !
 !  This is the main soil model prediction scheme
 !
@@ -732,7 +751,7 @@ real, dimension(size(ps,1),size(ps,2)) :: irflx, tcrit, soilp, zo, &
                                           msink, tsfc, gk, grs, snow_orig, &
                                           snowtmp, subday_orig
 
-real, dimension(size(ps,1),size(ps,2)) :: coszen, frost, frost_mom, albedo, emiss, delp
+real, dimension(size(ps,1),size(ps,2)) :: coszen, frost, frost_blk, frost_mom, albedo, emiss, delp
 
 real, dimension(size(ps,1),size(ps,2),size(tgrnd,3)) :: tg,torig,sflux,tgtmp
 
@@ -902,7 +921,6 @@ else         !               uniform subsurface thermal inertia
 
 endif       ! -----------------  end of tridiagonal matrix formulation
 
-
 !                surface ir flux
 !               =====================
 
@@ -910,14 +928,19 @@ endif       ! -----------------  end of tridiagonal matrix formulation
 if (do_waterice_albedo) then
     frost(:,:)= sfc_frost(is:ie,js:je,1)
     frost_mom(:,:)= sfc_frost_mom(is:ie,js:je,1)
+    frost_blk(:,:)= sfc_frost_blk(is:ie,js:je,1)
 else
     frost(:,:)= 0.
     frost_mom(:,:)= 0.
+    frost_blk(:,:)= 0.
 endif
 coszen(:,:)= 0.0
 if (do_moment_water) then
     call albedo_calc( is, js, lon, lat, &
                 coszen, tsfc, ps, snowin, frost_mom, albedo, emiss )
+elseif (do_bulk_water) then
+    call albedo_calc( is, js, lon, lat, &
+                coszen, tsfc, ps, snowin, frost_blk, albedo, emiss )
 else
     call albedo_calc( is, js, lon, lat, &
                 coszen, tsfc, ps, snowin, frost, albedo, emiss )
@@ -1014,7 +1037,7 @@ else
         nonlatent_flux = dnflx  + shflx  - irflx + (1.-alpha)*sflux(:,:,1)
         rhs(:,:,1)=tsfc + (delt*crd3d(:,:,1))*( nonlatent_flux + &
                 4.0*irflx+ dsens_dsurf*tsfc)
-        bdiag(:,:,1)=bdiag(:,:,1)+(delt*crd3d(:,:,1))*(4.0*stefan*emiss*tsfc**3 + dsens_dsurf)
+        bdiag(:,:,1)=bdiag(:,:,1)+(delt*crd3d(:,:,1))*(4.0*stefan*emiss*tsfc**3 + dsens_dsurf )
         istart=1
         snowtmp=0.
     end where  !snow
@@ -1073,7 +1096,6 @@ else
     snowtmp= 0.0
 
 endif
-
 
 !      Finally, update final surface temperature
 tgtmp(:,:,1)= tsfc(:,:)
@@ -1180,8 +1202,11 @@ end where
 !      include an albedo dependence on frost;
 !            frost_threshhold (via namelist) in m
 !              frost (kg/m**2) ;  hence the 1000.0 conversion
-where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. )
+where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. .and. ts .lt. 273.)
     albedo = albedo_h2o
+    emiss_sfc = emiss_h2o
+else where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. .and. ts .ge. 273.)
+    albedo = albedo_h2o_liquid
     emiss_sfc = emiss_h2o
 end where
 
@@ -1318,7 +1343,6 @@ if ( npx > 0 ) then
     call map_to_cubed_simple( nlon, nlat, lat1, lon1, htopo, grid, agrid,  &
                        phis, npx, npy, npx_global, bd2 )
 
-
     if(mcpu0) write(*,*) 'cubed simple ok'
 
     sfc_field(is:ie,js:je) = phis(is:ie,js:je)
@@ -1449,6 +1473,9 @@ endif
 
 id_restart = register_restart_field(Til_restart, fname, 'snow', sfc_snow, domain=phys_domain,mandatory=.false.)
 id_restart = register_restart_field(Til_restart, fname, 'frost', sfc_frost, domain=phys_domain,mandatory=.false.)
+id_restart = register_restart_field(Til_restart, fname, 'frost_blk', sfc_frost_blk, domain=phys_domain,mandatory=.false.)
+id_restart = register_restart_field(Til_restart, fname, 'cprecip_blk', cumulative_prec_blk, domain=phys_domain,mandatory=.false.)
+!id_restart = register_restart_field(Til_restart, fname, 'cprecip_mconv', cumulative_prec_mconv, domain=phys_domain,mandatory=.false.)
 
 do n=1,nice_mass
     ndx= ice_mass_indx(n)
@@ -1471,6 +1498,9 @@ if (rst2) then
 
     id_restart = register_restart_field(Til_restart2, fname, 'snow', sfc_snow, domain=phys_domain,mandatory=.false.)
     id_restart = register_restart_field(Til_restart2, fname, 'frost', sfc_frost, domain=phys_domain,mandatory=.false.)
+    id_restart = register_restart_field(Til_restart2, fname, 'frost_blk', sfc_frost_blk, domain=phys_domain,mandatory=.false.)
+    id_restart = register_restart_field(Til_restart2, fname, 'cprecip_blk', cumulative_prec_blk, domain=phys_domain,mandatory=.false.)
+
     do n=1,nice_mass
         ndx= ice_mass_indx(n)
         call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)

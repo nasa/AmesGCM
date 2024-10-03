@@ -39,10 +39,15 @@ real*8, parameter ::     dev_dt = 0.63676    !  standard deviation of the dust d
 
 real*8, parameter ::     dev_ice= 0.3087     !  standard deviation of the water ice distribution
 ! gives an effective variance of 0.1  for water ice
+
+real*8, parameter ::     dev_co2ice= 0.3087     ! gives an effective variance of 0.1 for co2 ice, same as water ice
+
 real*8, parameter ::     athird = (1. / 3.)
 
 real*8, parameter ::     dpden_ice = 917.     !  water ice particle density
 real*8, parameter ::     dpden_dt = 2.5e+3    !  dust particle density
+
+real*8, parameter ::     dpden_co2ice = 1620.     !  co2 ice particle density
 
 integer :: ntrace
 
@@ -64,7 +69,11 @@ integer, parameter :: L_NREFV   = 6
 real*8, parameter :: UBARI = 0.5D0
 
 integer, parameter :: nbin_rt = 20
+integer, parameter :: nbin_rtblk = 29
+integer, parameter :: nbin_rtco2 = 29
+
 integer, parameter :: nratio  = 15
+integer, parameter :: nratioblk = 1
 integer, parameter :: nlonv   = L_NSPECTV
 integer :: nloni
 
@@ -135,13 +144,24 @@ real*4, parameter :: cor_ratio(nratio) = [ 0.1,0.2,0.25,0.3,     &
                       0.8,0.9,0.99 ]
 
 real*8 rad_rt(nbin_rt),radb_rt(nbin_rt+1)
+real*8 rad_rtco2(nbin_rtco2),radb_rtco2(nbin_rtco2+1)
+real*8 rad_rtblk(nbin_rtblk),radb_rtblk(nbin_rtblk+1)
+
 
 !    Optical property array ingested from tabulated scattering calculations
 
 real*4, dimension(nratio,nbin_rt,nlonv)   ::  qextv_cld, qscatv_cld, gv_cld
+real*4, dimension(nbin_rt,nratio)   ::  fcorrect
+real*4, dimension(nratioblk,nbin_rtco2,nlonv)   ::  qextv_co2cld, qscatv_co2cld, gv_co2cld
+real*4, dimension(nratioblk,nbin_rtblk,nlonv)   ::  qextv_bcld, qscatv_bcld, gv_bcld
+real*4, dimension(nratioblk,nbin_rtblk,nlonv)   ::  qextv_blcld, qscatv_blcld, gv_blcld
 
 real*4, allocatable :: qexti_cld(:,:,:), qscati_cld(:,:,:), gi_cld(:,:,:)
 real*4, allocatable :: qexti_dst(:,:),   qscati_dst(:,:),   gi_dst(:,:)
+
+real*4, allocatable :: qexti_bcld(:,:,:), qscati_bcld(:,:,:), gi_bcld(:,:,:)
+real*4, allocatable :: qexti_blcld(:,:,:), qscati_blcld(:,:,:), gi_blcld(:,:,:)
+real*4, allocatable :: qexti_co2cld(:,:,:), qscati_co2cld(:,:,:), gi_co2cld(:,:,:)
 
 real*4, dimension(nbin_rt,nlonv)  ::   qextv_dst, qscatv_dst, gv_dst
 
@@ -177,11 +197,18 @@ logical :: specified_dt
 
 !  Cloud Radiative properties
 
-real*8, allocatable  :: TAUREFCLD(:)
+real*8, allocatable  :: TAUREFCLD(:), TAUREFCLD_UV(:)
 real*8, allocatable  :: QEXTREFCLD(:)
 
 real*8, allocatable  :: QXVCLD(:,:), QSVCLD(:,:), GVCLD(:,:)
 real*8, allocatable  :: QXICLD(:,:), QSICLD(:,:), GICLD(:,:)
+
+! CO2 cloud radiative properties
+real*8, allocatable  :: TAUREFCO2CLD(:)
+real*8, allocatable  :: QEXTREFCO2CLD(:)
+
+real*8, allocatable  :: QXVCO2CLD(:,:), QSVCO2CLD(:,:), GVCO2CLD(:,:)
+real*8, allocatable  :: QXICO2CLD(:,:), QSICO2CLD(:,:), GICO2CLD(:,:)
 
 !  Dust Radiative properties
 
@@ -205,13 +232,19 @@ integer, parameter :: npnlte = 68
 real*8 :: pnb(npnlte), ef1(npnlte), ef2(npnlte)
 real*8 :: co2vmr(npnlte), o3pvmr(npnlte), n2covmr(npnlte)
 
+logical ::  mcpu0
+
 !  Namelist---------------------------
 logical :: tmom = .false.
-logical :: radactive_water= .false.   ! Make water vapor radiatively active
-logical :: radactive_cloud = .false.  ! Turn on radiative effects of moment scheme clouds
-logical :: radactive_cloud_bin = .false. ! Turn on radiative effects of bin simple clouds
+logical :: radactive_water= .false.
+logical :: radactive_cloud = .false.
+logical :: radactive_cloud_bin = .false.
+logical :: radactive_cloud_bulk = .false. ! Include radiative effects of clouds from bulk scheme
+logical :: radactive_co2cloud = .false.   ! Radiatively active CO2 clouds
 real    :: scale_cloud_bin= 1.0
 real    :: simple_cloud_radius = 1.5                !  cloud radius in microns    
+real    :: bulk_ccn = 1.e5   ! number of seed nuclei for bulk h2o cloud RT ( # / kg gaseous CO2)
+real    :: bulk_co2_ccn = 1.e5   ! number of seed nuclei for co2 cloud RT ( # / kg gaseous CO2)
 logical :: do_nlte = .false.             ! do non-LTE correction in IR
 logical :: ames_15band = .false.         ! Use 15 band version. If false, use 12 band
 logical :: use_extended_cor_ks = .false. ! Use RT tables with extended temperture range and CO2 line widths appropriate for higher pressures
@@ -248,13 +281,16 @@ real, dimension(8) :: gi_read = (/0.004D0, 0.030D0, 0.095D0,        &
                                           0.214D0, 0.316D0, 0., 0., 0. /)
 
 namelist /ames_rtmod_nml/ tmom, radactive_water,                &
-       radactive_cloud, do_nlte, rtdata_path,                   &
+       radactive_cloud, radactive_cloud_bulk,                   &
+       radactive_co2cloud,                                      &
+       do_nlte, rtdata_path,                                    &
        ames_15band, use_extended_cor_ks,                        &
-       do_cia, cia_co2, cia_h2, &
-       radactive_dust_TOG, use_boxinterp12,        &
+       do_cia, cia_co2, cia_h2,                                 &
+       radactive_dust_TOG, use_boxinterp12,                     &
        do_fv3_dust_opt, fv3_gfac, fv3_sscat, do_dust_ir_scale,  &
        fv3_ir_scale, radactive_cloud_bin, scale_cloud_bin,      &
-       simple_cloud_radius, do_irflux_scale, scale_by_scon,     &
+       simple_cloud_radius, bulk_ccn, bulk_co2_ccn,             &
+       do_irflux_scale, scale_by_scon,                          &
        qxv_read, qsv_read, gv_read, qxi_read, qsi_read, gi_read, &
        user_fixed_dust_opts
 
@@ -493,6 +529,15 @@ allocate(planckir(L_NSPECTI,8501), stat=err)
 allocate(qexti_cld(nratio,nbin_rt,nloni), stat=err)
 allocate(qscati_cld(nratio,nbin_rt,nloni), stat=err)
 allocate(gi_cld(nratio,nbin_rt,nloni), stat=err)
+allocate(qexti_bcld(nratioblk,nbin_rtblk,nloni), stat=err)
+allocate(qscati_bcld(nratioblk,nbin_rtblk,nloni), stat=err)
+allocate(gi_bcld(nratioblk,nbin_rtblk,nloni), stat=err)
+allocate(qexti_blcld(nratioblk,nbin_rtblk,nloni), stat=err)
+allocate(qscati_blcld(nratioblk,nbin_rtblk,nloni), stat=err)
+allocate(gi_blcld(nratioblk,nbin_rtblk,nloni), stat=err)
+allocate(qexti_co2cld(nratioblk,nbin_rtco2,nloni), stat=err)
+allocate(qscati_co2cld(nratioblk,nbin_rtco2,nloni), stat=err)
+allocate(gi_co2cld(nratioblk,nbin_rtco2,nloni), stat=err)
 allocate(qexti_dst(nbin_rt,nloni), stat=err)
 allocate(qscati_dst(nbin_rt,nloni), stat=err)
 allocate(gi_dst(nbin_rt,nloni), stat=err)
@@ -546,6 +591,7 @@ implicit none
 integer :: err
 
 allocate(taurefcld(l_levels+1), stat=err)
+allocate(taurefcld_uv(l_levels+1), stat=err)
 allocate(qextrefcld(l_levels+1), stat=err)
 
 allocate(qxvcld(l_levels+1,l_nspectv), stat=err)
@@ -555,6 +601,20 @@ allocate(gvcld(l_levels+1,l_nspectv), stat=err)
 allocate(qxicld(l_levels+1,l_nspecti), stat=err)
 allocate(qsicld(l_levels+1,l_nspecti), stat=err)
 allocate(gicld(l_levels+1,l_nspecti), stat=err)
+
+
+! CO2 cloud properties
+
+allocate(taurefco2cld(l_levels+1), stat=err)
+allocate(qextrefco2cld(l_levels+1), stat=err)
+
+allocate(qxvco2cld(l_levels+1,l_nspectv), stat=err)
+allocate(qsvco2cld(l_levels+1,l_nspectv), stat=err)
+allocate(gvco2cld(l_levels+1,l_nspectv), stat=err)
+
+allocate(qxico2cld(l_levels+1,l_nspecti), stat=err)
+allocate(qsico2cld(l_levels+1,l_nspecti), stat=err)
+allocate(gico2cld(l_levels+1,l_nspecti), stat=err)
 
 !  dust radiative properties
 
@@ -571,6 +631,12 @@ allocate(gidst(l_levels+1,l_nspecti), stat=err)
 !    rjw     zeros out the cloud optical arrays
 call ini_optcld(qxvcld,qxicld,qsvcld,qsicld,gvcld,gicld, &
              qextrefcld,taurefcld)
+
+!  zero out CO2 cloud optical arrays
+call ini_optcld(qxvco2cld,qxico2cld,qsvco2cld,qsico2cld, &
+             gvco2cld,gico2cld, &
+             qextrefco2cld,taurefco2cld)
+
 !    rjw   sets default values for dust optical arrays
 call ini_optdst(gv,gi,                                   &
        qxvdst,qxidst,qsvdst,qsidst,gvdst,gidst,qextrefdst  )
@@ -640,6 +706,7 @@ implicit none
 
 
 deallocate(taurefcld)
+deallocate(taurefcld_uv)
 deallocate(qextrefcld)
 deallocate(qxvcld)
 deallocate(qsvcld)
@@ -654,6 +721,15 @@ deallocate(gvdst)
 deallocate(qxidst)
 deallocate(qsidst)
 deallocate(gidst)
+
+deallocate(taurefco2cld)
+deallocate(qextrefco2cld)
+deallocate(qxvco2cld)
+deallocate(qsvco2cld)
+deallocate(gvco2cld)
+deallocate(qxico2cld)
+deallocate(qsico2cld)
+deallocate(gico2cld)
 
 deallocate(co2i)
 deallocate(co2v)
@@ -726,6 +802,7 @@ subroutine ames_rt_driver(pl, tl, ptop,           &
 		 outsolARG, directonlyARG,              &
                  taudust_diagARG,                       &   !taudust (:,:,2)
 		 taucloud_diagARG,                      &   !taucloud(:,:,2)
+                 tauco2cloud_diagARG,                   &   !taucloud(:,:,2)
                  diffvtARG, directsolARG, detauARG,     &
                  fluxupvARG, fluxdnvARG, fmnetvARG,     &
                  fluxupiARG, fluxdniARG, fmnetiARG,     &
@@ -736,8 +813,10 @@ subroutine ames_rt_driver(pl, tl, ptop,           &
 		 diag,                                  &   ! scalar
 		 taurefd_out,                           &   ! dustref(:,:,kd)
                  taurefc_out,                           &   ! cldref (:,:,kd)
-	         taudust_momARG,taudust_fixARG,                 &   ! taudust_mom(:,:,2)
-		 tstrat_dt, taudust_reffARG,                        &
+                 taurefco2c_out,                        &   ! cldco2ref (:,:,kd)
+	         taudust_momARG,taudust_fixARG,         &   ! taudust_mom(:,:,2)
+		 tstrat_dt, nco2,nice_blk,              &
+                 taudust_reffARG,                       &
     tbands  )
 
 
@@ -765,10 +844,13 @@ real*8, intent(inout) :: lw_heating(l_layers)
 real*8, intent(in) :: qtrace(l_layers,ntrace)
 logical, intent(in), optional :: directonlyarg
 logical, intent(in) :: diag
+integer, intent(in) :: nco2
+integer, intent(in) :: nice_blk
 real*8, intent(out), optional :: taudust_diagarg(2)
 real*8, intent(out), optional :: taudust_momarg(2)
 real*8, intent(out), optional :: taudust_fixarg(2)
-real*8, intent(out), optional :: taucloud_diagarg(2)
+real*8, intent(out), optional :: taucloud_diagarg(4)
+real*8, intent(out), optional :: tauco2cloud_diagarg(2)
 real*8, intent(out), optional :: outsolarg
 real*8, intent(out), optional :: diffvtarg
 real*8, intent(out), optional :: directsolarg
@@ -785,17 +867,18 @@ real*8, intent(out), optional :: swtotarg
 real*8, intent(out), optional :: lw_heating_spec(l_nspecti,l_layers)
 real*8, intent(out), optional :: htrt2(l_layers) ![k/s]
 real*8, intent(out), optional :: taurefd_out(l_layers)
-real*8, intent(out), optional :: taurefc_out(l_layers)
+real*8, intent(out), optional :: taurefc_out(l_layers,2)
+real*8, intent(out), optional :: taurefco2c_out(l_layers)
 real*8, intent(out) :: tstrat_dt
 real*8, intent(out), optional :: taudust_reffarg(ntrace,2)
 real*8, intent(out), optional :: tbands(3)
-
 
 ! local versions of optional arguments
 logical :: directonly
 real*8 :: taudust_diag(2)
 real*8 :: taureff_split(ntrace,2)
-real*8 :: taucloud_diag(2)
+real*8 :: taucloud_diag(4)
+real*8 :: tauco2cloud_diag(2)
 real*8 :: outsol
 real*8 :: diffvt
 real*8 :: directsol
@@ -812,6 +895,8 @@ real*8 :: nfluxtopv
 real*8 :: nfluxtopi, nfluxtopis(l_nspecti)
 real*8 :: swtot
 
+real*8 :: acoszt
+
 real*8, parameter :: pnlteref = 0.001 !mbar
 
 real*8  :: lw_heatingin(l_layers)
@@ -823,6 +908,7 @@ real*8  :: tl2(l_levels)
 real*8  :: htrt(l_levels) ![k/s]
 real*8  :: htrt3(l_levels) ![k/s]
 real*8  :: plev(l_levels), pmid(l_levels)
+real*8  :: plev2(l_levels)
 real*8  :: delp(l_layers)
 real*8  :: tlev(l_levels), tmid(l_levels)
 real*8  :: qh2o(l_levels)
@@ -1024,15 +1110,18 @@ endif  ! end check on dust cases
 tauref(l_levels+1) = 0.0
 tausurf       = taucum(l_levels)
 
+mcpu0 = (mpp_pe() == mpp_root_pe())
+
 if (radactive_cloud) then
     call opt_cld(qtrace,pl, &
         qxvcld,qxicld,qsvcld,qsicld,gvcld,gicld, &
         qextrefcld,taurefcld,  &
-        taucloud_diag)
+        taucloud_diag,taurefcld_uv)
     if (present(taurefc_out)) then
         do l=1,l_layers
             n= 2*l + 2
-            taurefc_out(l) = taurefcld(n)/((plev(n)-plev(n-1))/delp(l))
+            taurefc_out(l,1) = taurefcld(n)/((plev(n)-plev(n-1))/delp(l))
+            taurefc_out(l,2) = taurefcld_uv(n)/((plev(n)-plev(n-1))/delp(l))
         end do
     end if
 
@@ -1043,19 +1132,55 @@ else if( radactive_cloud_bin ) then
     call opt_cld_simple(cldice_bin_scale, pl,               &
         qxvcld,qxicld,qsvcld,qsicld,gvcld,gicld, &
         qextrefcld,taurefcld, surfcld,                 &
-        taucloud_diag    )
+        taucloud_diag, taurefcld_uv    )
 
     if (present(taurefc_out)) then
         do l=1,l_layers
             n= 2*l + 2
-            taurefc_out(l) = taurefcld(n)/((plev(n)-plev(n-1))/delp(l))
+            taurefc_out(l,1) = taurefcld(n)/((plev(n)-plev(n-1))/delp(l))
+            taurefc_out(l,2) = taurefcld_uv(n)/((plev(n)-plev(n-1))/delp(l))
         end do
     end if
+
+else if( radactive_cloud_bulk ) then
+
+    call opt_cld_blk(qtrace,pl,tlev, &
+        qxvcld,qxicld,qsvcld,qsicld,gvcld,gicld, &
+        qextrefcld,taurefcld,  &
+        taucloud_diag,nice_blk,mcpu0, taurefcld_uv)
+
+    if (present(taurefc_out)) then
+        do l=1,l_layers
+            n= 2*l + 2
+            taurefc_out(l,1) = taurefcld(n)/((plev(n)-plev(n-1))/delp(l))
+            taurefc_out(l,2) = taurefcld_uv(n)/((plev(n)-plev(n-1))/delp(l))
+        end do
+    end if
+
 else
     do k=1,l_levels
         taurefcld(k) = 0.0d0
     end do
-    if (present(taurefc_out)) taurefc_out(:) = 0.0d0
+    if (present(taurefc_out)) taurefc_out = 0.0d0
+endif
+
+
+!CO2 cloud radiative effects
+if( radactive_co2cloud) then
+
+    call opt_co2cld(qtrace,pl,               &
+        qxvco2cld,qxico2cld,qsvco2cld,qsico2cld, &
+        gvco2cld,gico2cld, &
+        qextrefco2cld,taurefco2cld,                 &
+        tauco2cloud_diag, nco2)
+
+
+    if (present(taurefco2c_out)) then
+        do l=1,l_layers
+            n= 2*l + 2
+            taurefco2c_out(l) = taurefco2cld(n)/((plev(n)-plev(n-1))/delp(l))
+        end do
+    end if
 endif
 
 if (dosw) then
@@ -1066,7 +1191,9 @@ if (dosw) then
             call optcv15(dtauv,tauv,taucumv,plev,     &
                      qxvdst,qsvdst,gvdst,wbarv,cosbv,  &
                       tauref,tmid,pmid,taugsurf,qh2o,   &
-                      qextrefcld,taurefcld,qxvcld,qsvcld,gvcld)
+                      qextrefcld,taurefcld,qxvcld,qsvcld,gvcld, &
+                      qextrefco2cld,taurefco2cld,  &
+                      qxvco2cld,qsvco2cld,gvco2cld)
         else
             call optcv(dtauv,tauv,taucumv,plev,     &
                      qxvdst,qsvdst,gvdst,wbarv,cosbv,  &
@@ -1102,13 +1229,13 @@ if (dosw) then
 endif  !end sw check
 
 if (dolw) then !do ir calculation
-
-
     if (ames_15band .or. use_boxinterp12) then
         call optci15(dtaui,taucumi,plev,tlev,    &
                      qextrefdst,qxidst,qsidst,gidst,cosbi,wbari,  &
                      tauref,tmid,pmid,taugsurfi,qh2o,     &
-                     qextrefcld,taurefcld,qxicld,qsicld,gicld)
+                     qextrefcld,taurefcld,qxicld,qsicld,gicld,     &
+                     qextrefco2cld,taurefco2cld,    &
+                     qxico2cld,qsico2cld,gico2cld)
     else
         call optci(dtaui,taucumi,plev,    &
                      qextrefdst,qxidst,qsidst,gidst,cosbi,wbari,  &
@@ -1302,6 +1429,7 @@ enddo
 
 if (present(taudust_diagARG)) taudust_diagARG = taudust_diag
 if (present(taucloud_diagARG)) taucloud_diagARG = taucloud_diag
+if (present(tauco2cloud_diagARG)) tauco2cloud_diagARG = tauco2cloud_diag
 if (present(detauARG)) detauARG = detau
 if (present(outsolARG)) outsolARG = outsol
 if (present(diffvtARG)) diffvtARG = diffvt
@@ -1977,7 +2105,7 @@ end subroutine opt_dst
 subroutine opt_cld(qtrace,pl,   &
                 Qxv,Qxi,Qsv,Qsi,gv,gi, &
                 Qextrefcld,TAUREFCLD, &
-                taucloud)
+                taucloud,taurefcld_uv)
 !=====================================================================
 
 !  calculate cloud opacities
@@ -1998,12 +2126,14 @@ real*8  gv(l_levels+1,l_nspectv)
 
 real*8  qxi(l_levels+1,l_nspecti)
 real*8  qsi(l_levels+1,l_nspecti)
+real*8  qbi(l_levels+1,l_nspecti)
 real*8  gi(l_levels+1,l_nspecti)
 
 real*8  qextrefcld(l_levels+1)
 real*8  taurefcld(l_levels+1)
+real*8  taurefcld_uv(l_levels+1)
 
-real*8  taucloud(2)
+real*8  taucloud(4)
 
 
 !  local variables
@@ -2028,6 +2158,7 @@ do_it = .false.
 do k = 1, l_levels+1
     qextrefcld(k) = 1.
     taurefcld(k) = 0.
+    taurefcld_uv(k) = 0.
 enddo
 
 do i = 1, nlonv
@@ -2052,8 +2183,7 @@ enddo
 dev= dev_ice
 dev2 = 1. / ( sqrt(2.)*dev )
 
-taucloud(1) = 0.
-taucloud(2) = 0.
+taucloud(:) = 0.
 
 do l = 1, l_layers
 
@@ -2135,10 +2265,13 @@ do l = 1, l_layers
             do iwav = 1, nloni
                 qxi(k,iwav) = 0.
                 qsi(k,iwav) = 0.
+                qbi(k,iwav) = 0.
                 do i = 1, nbin_rt
                     qxi(k,iwav) = qxi(k,iwav)+ surf(i) * qexti_cld(irap,i,iwav)
                     qsi(k,iwav) = qsi(k,iwav)+ surf(i) * qscati_cld(irap,i,iwav)
                     gi(k,iwav)  = gi(k,iwav) + surf(i) * gi_cld(irap,i,iwav)
+                    qbi(k,iwav) = qbi(i,iwav)+ surf(i) * fcorrect(i,irap) &
+                                * (qexti_cld(irap,i,iwav)-qscati_cld(irap,i,iwav))
                 enddo
                 qsi(k,iwav) = min( qsi(k,iwav) , 0.99999*qxi(k,iwav) )
             enddo
@@ -2146,12 +2279,16 @@ do l = 1, l_layers
             qextrefcld(k) = qxv(k,l_nrefv)
             mass          = 100. * (pl(k) - pl(k-1)) / grav
             taurefcld(k)  = ao * qextrefcld(k) * mass
+            taurefcld_uv(k) = ao * qxv(k,l_nspectv) * mass
 
             !       for diagnostics: cloud opacity at ref wavelengths (in the vis and ir)
             taucloud(1) = taucloud(1) + taurefcld(k)
             taucloud(2) = taucloud(2)              &
                                    +taurefcld(k) / qextrefcld(k) *     &
                                 ( qxi(k,l_nrefi) - qsi(k,l_nrefi) )
+            taucloud(3) = taucloud(3) + taurefcld(k) &
+                                / qextrefcld(k) * qbi(k,l_nrefi)
+            taucloud(4) = taucloud(4) + taurefcld_uv(k)
         enddo
 
     endif    ! condition on cloud amount
@@ -2168,7 +2305,7 @@ subroutine opt_cld_simple(cldice_bin,pl,       &
                     Qxv,Qxi,Qsv,Qsi,gv,gi,   &
                     Qextrefcld,TAUREFCLD,    &
                     surfcld,                 &
-                    taucloud    )
+                    taucloud, taurefcld_uv    )
 !
 !    Simple cloud opacity calculation
 !
@@ -2188,12 +2325,14 @@ real*8  gv (L_LEVELS+1,L_NSPECTV)
 real*8  Qxi(L_LEVELS+1,L_NSPECTI)
 real*8  Qsi(L_LEVELS+1,L_NSPECTI)
 real*8  gi (L_LEVELS+1,L_NSPECTI)
+real*8  qbi(l_levels+1,l_nspecti)
 
 real*8  Qextrefcld(L_LEVELS+1)
 real*8  TAUREFCLD (L_LEVELS+1)
+real*8  TAUREFCLD_uv (L_LEVELS+1)
 real*8  surfcld( nbin_rt,l_layers )
 
-real*8  taucloud(2)
+real*8  taucloud(4)
 
 
 !  Local variables
@@ -2201,8 +2340,8 @@ real*8  taucloud(2)
 
 integer i,iwav,j,k,l,nn, irap, ibin
 
-real*8 Rn,Rs,Ao,Mo,No, Mass, ssize
-
+real*8 Rn,Rs,ao,mo,no, Mass, ssize
+real*8 cst,dev
 
 ! Initialyze various variables
 ! ----------------------------
@@ -2210,6 +2349,7 @@ real*8 Rn,Rs,Ao,Mo,No, Mass, ssize
 do k = 1, l_levels+1
     qextrefcld(k) = 1.
     taurefcld(k) = 0.
+    taurefcld_uv(k) = 0.
 enddo
 
 do i = 1, nlonv
@@ -2231,12 +2371,12 @@ enddo
 !  Treatment
 !  ---------
 
+dev= dev_ice
+
 taucloud(1) = 0.
 taucloud(2) = 0.
 
-!          Assume smallest possible core to ice ratio
-!    irap = nratio
-irap= 1
+irap = 1
 
 ssize= simple_cloud_radius * 1.0e-6
 
@@ -2247,7 +2387,7 @@ do nn= 1, nbin_rt
     endif
 enddo
 
-Ao= 0.75 / ( dpden_ice * ssize )
+ao= 0.75 / ( dpden_ice * ssize )
 
 surfcld(:,:)= 0.0
 surfcld(ibin,:)= 1.0
@@ -2277,6 +2417,7 @@ do l = 1, l_layers
         qextrefcld(k) = qxv(k,l_nrefv)
         mass          = 100. * (pl(k) - pl(k-1)) / grav
         taurefcld(k)  = ao * cldice_bin(l) * qextrefcld(k) * mass
+        taurefcld_uv(k) = ao * cldice_bin(l) * qxv(k,l_nspectv) * mass
 
         !       for diagnostics: cloud opacity at ref wavelengths (in the vis and ir)
         taucloud(1) = taucloud(1) + taurefcld(k)
@@ -2289,6 +2430,423 @@ enddo    ! end loop over layers
 return
 
 end subroutine opt_cld_simple
+
+
+!=====================================================================
+
+subroutine opt_cld_blk(qtrace,pl,tl,   &
+                Qxv,Qxi,Qsv,Qsi,gv,gi, &
+                Qextrefcld,TAUREFCLD, &
+                taucloud,nice,mcpu0,taurefcld_uv)
+!=====================================================================
+
+!  calculate cloud opacities for bulk scheme
+
+
+implicit none
+
+!  Arguments
+!  ---------
+
+
+real*8  qtrace(:,:)
+real*8  pl(l_levels)
+real*8  tl(l_levels)
+
+real*8  qxv(l_levels+1,l_nspectv)
+real*8  qsv(l_levels+1,l_nspectv)
+real*8  gv(l_levels+1,l_nspectv)
+
+real*8  qxi(l_levels+1,l_nspecti)
+real*8  qsi(l_levels+1,l_nspecti)
+real*8  gi(l_levels+1,l_nspecti)
+real*8  qbi(l_levels+1,l_nspecti)
+
+real*8  qextrefcld(l_levels+1)
+real*8  taurefcld(l_levels+1)
+real*8  taurefcld_uv(l_levels+1)
+
+real*8  taucloud(4)
+
+integer nice
+
+logical mcpu0
+
+!  local variables
+!  ---------------
+
+integer i,iwav,j,k,l,irap,irad
+integer nn
+
+real*8 dens,cst,dev,dev2
+real*8 rn,rs,ao,mo,no
+real*8 surf(nbin_rtblk)
+real*8 mass
+
+real*4 mantletocore
+logical do_it
+
+real*8 derf
+
+! Initialize various variables
+! ----------------------------
+do_it = .false.
+do k = 1, l_levels+1
+    qextrefcld(k) = 1.
+    taurefcld(k) = 0.
+    taurefcld_uv(k) = 0.
+enddo
+
+do i = 1, nlonv
+    do k = 1, l_levels+1
+        qxv(k,i) = qextrefcld(k)
+        qsv(k,i) = qextrefcld(k) * 0.99
+        gv(k,i)  = 0.
+    enddo
+enddo
+
+do i = 1, nloni
+    do k = 1, l_levels+1
+        qxi(k,i) = qextrefcld(k)
+        qsi(k,i) = qextrefcld(k) * 0.99
+        gi(k,i)  = 0.
+    enddo
+enddo
+
+!  Treatment
+!  ---------
+
+dev= dev_ice
+dev2 = 1. / ( sqrt(2.)*dev )
+
+taucloud(1) = 0.
+taucloud(2) = 0.
+
+!  Assume smallest core to ice ratio for bulk scheme
+irap= nratioblk
+
+do l = 1, l_layers
+
+    !     Get the cross-section mean radius (Rs) of the log-normal distribution
+    mo = qtrace(l,nice)  
+    no = bulk_ccn       ! number mixing ratio
+
+    cst  = 0.75 / (pi * dpden_ice)
+    rs = ( mo/no*cst )**(athird) !* dexp( -0.5*dev**2. )
+
+    do_it = Rs .gt. 1.e-7
+
+    if (do_it) then
+
+        !     get the total cross sectional area ao of the water ice particles
+        ao = no * pi * rs**2.
+
+        ! assume single particle size for bulk scheme 
+
+        !! *********************************************************************
+        !
+        !!     define the cross-section weighted distribution, i.e. surface/size
+        !!   bin.   change rs to reff.  mak 6 may 2008.
+        !
+        !rs = rs * dexp ( 1.5 * dev**2. )
+        !
+        !! *********************************************************************
+
+        rs = min( max(rs,1.e-7) , 100.e-6 )
+!        rs = 1. / rs
+!
+!        do i = 1, nbin_rtblk
+!            surf(i) = 0.5 * ( derf( dlog(radb_rtblk(i+1)*rs) * dev2 )     &
+!                         -derf( dlog(radb_rtblk(i)  *Rs) * dev2 ) )
+!        enddo
+
+
+        irad=nbin_rtblk-1
+        do i = 1, nbin_rtblk
+          if (Rs.le.rad_rtblk(i) .and. i.ne.1) then
+            irad = i - 1
+            exit
+          elseif (Rs.lt.rad_rtblk(i) .and. i.eq.1) then
+            irad = 1
+            exit
+          endif
+        enddo
+
+        do nn = 1, 2
+            k = 2*l + 1 + nn
+
+            if(tl(k).lt.273.) then
+
+            ! Use optical constants for ice
+            do iwav = 1, nlonv
+              qxv(k,iwav) = 0.
+              qsv(k,iwav) = 0.
+              qxv(k,iwav) = qextv_bcld(irap,irad+1,iwav)+ &
+               (qextv_bcld(irap,irad,iwav)-  &
+               qextv_bcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              qsv(k,iwav) = qscatv_bcld(irap,irad+1,iwav)+  &
+               (qscatv_bcld(irap,irad,iwav)-   & 
+               qscatv_bcld(irap,irad+1,iwav))*   &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              gv(k,iwav)  = gv_bcld(irap,irad+1,iwav)+   &
+               (gv_bcld(irap,irad,iwav)-gv_bcld(irap,irad+1,iwav))*   & 
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1)) 
+              qsv(k,iwav) = min( qsv(k,iwav) , 0.99999*qxv(k,iwav) )
+            enddo
+
+            do iwav = 1, nloni
+              qxi(k,iwav) = 0.
+              qsi(k,iwav) = 0.
+              qxi(k,iwav) = qexti_bcld(irap,irad+1,iwav)+  &
+               (qexti_bcld(irap,irad,iwav)-  & 
+               qexti_bcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              qsi(k,iwav) = qscati_bcld(irap,irad+1,iwav)+  &
+               (qscati_bcld(irap,irad,iwav)-  &
+               qscati_bcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              gi(k,iwav)  = gi_bcld(irap,irad+1,iwav)+  &
+               (gi_bcld(irap,irad,iwav)-gi_bcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              qsi(k,iwav) = min( qsi(k,iwav) , 0.99999*qxi(k,iwav) )
+            enddo
+
+
+            else
+           
+            !Use optical constants for liquid
+            do iwav = 1, nlonv
+              qxv(k,iwav) = 0.
+              qsv(k,iwav) = 0.
+              qxv(k,iwav) = qextv_blcld(irap,irad+1,iwav)+ &
+               (qextv_blcld(irap,irad,iwav)-  &
+               qextv_blcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              qsv(k,iwav) = qscatv_blcld(irap,irad+1,iwav)+  &
+               (qscatv_blcld(irap,irad,iwav)-   &
+               qscatv_blcld(irap,irad+1,iwav))*   &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              gv(k,iwav)  = gv_blcld(irap,irad+1,iwav)+   &
+               (gv_blcld(irap,irad,iwav)-gv_blcld(irap,irad+1,iwav))*   &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              qsv(k,iwav) = min( qsv(k,iwav) , 0.99999*qxv(k,iwav) )
+            enddo
+
+            do iwav = 1, nloni
+              qxi(k,iwav) = 0.
+              qsi(k,iwav) = 0.
+              qxi(k,iwav) = qexti_blcld(irap,irad+1,iwav)+  &
+               (qexti_blcld(irap,irad,iwav)-  &
+               qexti_blcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              qsi(k,iwav) = qscati_blcld(irap,irad+1,iwav)+  &
+               (qscati_blcld(irap,irad,iwav)-  &
+               qscati_blcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              gi(k,iwav)  = gi_blcld(irap,irad+1,iwav)+  &
+               (gi_blcld(irap,irad,iwav)-gi_blcld(irap,irad+1,iwav))*  &
+               log(rs/rad_rtblk(irad+1))/log(rad_rtblk(irad)/rad_rtblk(irad+1))
+              qsi(k,iwav) = min( qsi(k,iwav) , 0.99999*qxi(k,iwav) )
+            enddo
+
+            end if
+
+            qextrefcld(k) = qxv(k,l_nrefv)
+            mass          = 100. * (pl(k) - pl(k-1)) / grav
+            taurefcld(k)  = ao * qextrefcld(k) * mass
+            taurefcld_uv(k)  = ao * qxv(k,l_nspectv) * mass
+
+
+            !       for diagnostics: cloud opacity at ref wavelengths (in the vis and ir)
+            taucloud(1) = taucloud(1) + taurefcld(k)
+            taucloud(2) = taucloud(2)              &
+                                   +taurefcld(k) / qextrefcld(k) *     &
+                                ( qxi(k,l_nrefi) - qsi(k,l_nrefi) )
+!            taucloud(3) = taucloud(3) + taurefcld(k) &
+!                                / qextrefcld(k) * qbi(k,l_nrefi)
+!            taucloud(4) = taucloud(4) + taurefcld_uv(k)
+ 
+        enddo        
+
+    endif    ! condition on cloud amount
+
+enddo    ! end loop over layers
+
+
+return
+
+end subroutine opt_cld_blk
+
+
+!=====================================================================
+!=====================================================================
+subroutine opt_co2cld(qtrace,pl,         &
+                    Qxv,Qxi,Qsv,Qsi,gv,gi,   &
+                    Qextrefco2cld,TAUREFCO2CLD,    &
+                    tauco2cloud, nco2 )
+!
+!    CO2 cloud opacity calculation
+!
+
+implicit none
+
+!  Arguments
+!  ---------
+
+real*8,  intent(in), dimension(l_levels)  ::  pl
+
+real*8  qtrace(:,:)
+
+real*8  Qxv(L_LEVELS+1,L_NSPECTV)
+real*8  Qsv(L_LEVELS+1,L_NSPECTV)
+real*8  gv (L_LEVELS+1,L_NSPECTV)
+
+real*8  Qxi(L_LEVELS+1,L_NSPECTI)
+real*8  Qsi(L_LEVELS+1,L_NSPECTI)
+real*8  gi (L_LEVELS+1,L_NSPECTI)
+
+real*8  Qextrefco2cld(L_LEVELS+1)
+real*8  TAUREFCO2CLD (L_LEVELS+1)
+
+real*8  tauco2cloud(2)
+
+integer nco2
+
+!  Local variables
+!  ---------------
+
+integer i,iwav,j,k,l,nn,irap
+
+real*8 rn,rs,ao,mo,no,mass
+real*8 dens,cst,dev,dev2
+
+real*8  surf(nbin_rtco2)
+
+real*4 mantletocore
+logical do_it
+
+real*8 derf
+
+
+! Initialyze various variables
+! ----------------------------
+
+do k = 1, l_levels+1
+    qextrefco2cld(k) = 1.
+    taurefco2cld(k) = 0.
+enddo
+
+
+do i = 1, nlonv
+    do k = 1, l_levels+1
+        qxv(k,i) = qextrefco2cld(k)
+        qsv(k,i) = qextrefco2cld(k) * 0.99
+        gv(k,i)  = 0.
+    enddo
+enddo
+
+do i = 1, nloni
+    do k = 1, l_levels+1
+        qxi(k,i) = qextrefco2cld(k)
+        qsi(k,i) = qextrefco2cld(k) * 0.99
+        gi(k,i)  = 0.
+    enddo
+enddo
+
+
+
+!  Treatment
+!  ---------
+
+dev= dev_co2ice
+dev2 = 1. / ( sqrt(2.)*dev )
+
+tauco2cloud(1) = 0.
+tauco2cloud(2) = 0.
+
+!  Assume smallest core to ice ratio for bulk co2 cloud scheme
+irap= nratioblk
+
+
+do l = 1, l_layers
+
+        !     Get the cross-section mean radius (Rs) of the log-normal distribution
+    mo = qtrace(l,nco2)      
+    no = bulk_co2_ccn
+
+    cst  = 0.75 / (pi*dpden_co2ice)
+    rs = ( mo/no*cst )**(athird) * dexp( -0.5*dev**2. )
+    do_it = Rs .gt. 1.e-7
+
+    if (do_it) then
+        !     get the total cross sectional area ao of the water ice particles
+        ao = no * pi * rs**2.
+
+        ! *********************************************************************
+
+        !     define the cross-section weighted distribution, i.e. surface/size
+        !   bin.   change rs to reff.  mak 6 may 2008.
+
+        rs = rs * dexp ( 1.5 * dev**2. )
+
+        ! *********************************************************************
+
+        rs = min( max(rs,1.e-7) , 100.e-6 )
+        rs = 1. / rs
+
+        do i = 1, nbin_rtco2
+            surf(i) = 0.5 * ( derf( dlog(radb_rtco2(i+1)*rs) * dev2 )     &
+                         -derf( dlog(radb_rtco2(i)  *Rs) * dev2 ) )
+        enddo
+
+        !     get the average values of <qext>, <qscat>, and <g> for the whole distribution.
+        do nn = 1, 2
+            k = 2*l + 1 + nn
+
+            do iwav = 1, nlonv
+                qxv(k,iwav) = 0.
+                qsv(k,iwav) = 0.
+                do i = 1, nbin_rtco2
+                    qxv(k,iwav) = qxv(k,iwav)+ surf(i) * qextv_co2cld(irap,i,iwav)
+                    qsv(k,iwav) = qsv(k,iwav)+ surf(i) * qscatv_co2cld(irap,i,iwav)
+                    gv(k,iwav)  = gv(k,iwav) + surf(i) * gv_co2cld(irap,i,iwav)
+                enddo
+                qsv(k,iwav) = min( qsv(k,iwav) , 0.99999*qxv(k,iwav) )
+            enddo
+
+            do iwav = 1, nloni
+                qxi(k,iwav) = 0.
+                qsi(k,iwav) = 0.
+                do i = 1, nbin_rtco2
+                    qxi(k,iwav) = qxi(k,iwav)+ surf(i) * qexti_co2cld(irap,i,iwav)
+                    qsi(k,iwav) = qsi(k,iwav)+ surf(i) * qscati_co2cld(irap,i,iwav)
+                    gi(k,iwav)  = gi(k,iwav) + surf(i) * gi_co2cld(irap,i,iwav)
+                enddo
+                qsi(k,iwav) = min( qsi(k,iwav) , 0.99999*qxi(k,iwav) )
+            enddo
+
+            qextrefco2cld(k) = qxv(k,l_nrefv)
+            mass          = 100. * (pl(k) - pl(k-1)) / grav
+            taurefco2cld(k)  = ao * qextrefco2cld(k) * mass
+
+            !       for diagnostics: cloud opacity at ref wavelengths (in the vis and ir)
+            tauco2cloud(1) = tauco2cloud(1) + taurefco2cld(k)
+            tauco2cloud(2) = tauco2cloud(2)              &
+                                   +taurefco2cld(k) / qextrefco2cld(k) *     &
+                                ( qxi(k,l_nrefi) - qsi(k,l_nrefi) )
+
+        enddo
+
+
+    endif    ! condition on cloud amount
+
+enddo    ! end loop over layers
+
+return
+
+end subroutine opt_co2cld
+
 !=====================================================================
 !=====================================================================
 
@@ -2586,7 +3144,9 @@ end subroutine optcv
 subroutine optcv15(dtauv,tauv,taucumv,plev,          &
                qxvdst,qsvdst,gvdst,wbarv,cosbv,        &
                tauref,tmid,pmid,taugsurf,qh2o,  &
-               qextrefcld,taurefcld,qxvcld,qsvcld,gvcld)
+               qextrefcld,taurefcld,qxvcld,qsvcld,gvcld, &
+               qextrefco2cld,taurefco2cld,  &
+               qxvco2cld,qsvco2cld,gvco2cld)
 ! this subroutine sets the optical constants in the visible for 15 bands
 ! it calcualtes for each layer, for each specral interval in the visible
 ! layer: wbar, dtau, cosbar
@@ -2633,6 +3193,18 @@ real*8  :: tcloud(l_levels,l_nspectv)
 real*8  :: taureflk(l_levels+1,l_nspectv)
 real*8  :: taucldk(l_levels+1,l_nspectv)
 
+!   CO2 clouds
+real*8  :: qxvco2cld(l_levels+1,l_nspectv)
+real*8  :: qsvco2cld(l_levels+1,l_nspectv)
+real*8  :: gvco2cld(l_levels+1,l_nspectv)
+real*8  :: qextrefco2cld(l_levels+1)
+real*8  :: taurefco2cld(l_levels+1)
+real*8  :: taurefco2cld_save(l_levels+1)
+
+real*8  :: tco2cloud(l_levels,l_nspectv)
+
+real*8  :: tauco2cldk(l_levels+1,l_nspectv)
+
 integer :: l, nw, ng, k, ng1(l_nspectv), lk
 integer :: mt(l_levels,2), mp(l_levels,2), mw(l_levels)
 integer :: mtt(2), mpt(2), mn
@@ -2661,6 +3233,7 @@ logical :: pinter(l_levels), tinter(l_levels)
 do k=1,l_levels+1
     tauref_save(k) = tauref(k)
     taurefcld_save(k) = taurefcld(k)
+    taurefco2cld_save(k) = taurefco2cld(k)
 end do
 
 !  determine the total gas opacity throughout the column, for each
@@ -2680,6 +3253,7 @@ tcloud = 0.0
 dtauv = 0.0
 taucumv = 0.0
 dtaukv = 0.0
+tco2cloud = 0.0
 
 do k=2,l_levels
     dpr(k)   = plev(k)-plev(k-1)
@@ -2703,11 +3277,13 @@ do k=2,l_levels
 
     tauref(k)    = tauref(k) / qextref(k)
     taurefcld(k) = taurefcld(k) / qextrefcld(k)
+    taurefco2cld(k) = taurefco2cld(k) / qextrefco2cld(k)
 
     do nw=1,l_nspectv
         tray(k,nw)   = tauray(nw)*dpr(k)
         taeros(k,nw) = tauref(k)    * qxvdst(k,nw)
         tcloud(k,nw) = taurefcld(k) * qxvcld(k,nw)
+        tco2cloud(k,nw) = taurefco2cld(k) * qxvco2cld(k,nw)
     end do
 end do
 
@@ -2717,7 +3293,7 @@ do k=2,l_levels
 
     do nw=1,l_nspectv
 
-        trayaer = tray(k,nw) + taeros(k,nw) + tcloud(k,nw)
+        trayaer = tray(k,nw) + taeros(k,nw) + tcloud(k,nw) + tco2cloud(k,nw)
 
         do ng=1,l_ngauss-1
 
@@ -2747,7 +3323,7 @@ do k=2,l_levels
         !  Which holds continuum opacity only
 
         ng = l_ngauss
-        dtaukv(k,nw,ng) = taeros(k,nw)+tray(k,nw)+tcloud(k,nw)
+        dtaukv(k,nw,ng) = taeros(k,nw)+tray(k,nw)+tcloud(k,nw)+tco2cloud(k,nw)
 
     end do
 end do
@@ -2760,6 +3336,7 @@ do nw=1,l_nspectv
     do k=2,l_levels
         taureflk(k,nw) = tauref(k)    * qsvdst(k,nw)
         taucldk(k,nw)  = taurefcld(k) * qsvcld(k,nw)
+        tauco2cldk(k,nw) = taurefco2cld(k) * qsvco2cld(k,nw)
     enddo
 enddo
 
@@ -2770,16 +3347,20 @@ do nw=1,l_nspectv
     do l=1,l_layers
         k              = 2*l+1
         dtauv(l,nw,ng) = dtaukv(k,nw,ng)+dtaukv(k+1,nw,ng)
-        cosbv(l,nw,ng) = ( gvdst(k,nw)  * taureflk(k,nw) +           &
+        cosbv(l,nw,ng) = ( gvdst(k,nw)  * taureflk(k,nw) +          &
                          gvdst(k+1,nw)* taureflk(k+1,nw) +         &
                          gvcld(k,nw)  * taucldk(k,nw)  +           &
-                         gvcld(k+1,nw)* taucldk(k+1,nw) ) /        &
+                         gvcld(k+1,nw)* taucldk(k+1,nw) +          &
+                         gvco2cld(k,nw)  * tauco2cldk(k,nw)  +     &
+                         gvco2cld(k+1,nw)* tauco2cldk(k+1,nw) ) /  &
                        ( tray(k,nw)     + tray(k+1,nw) +           &
                          taureflk(k,nw) + taureflk(k+1,nw) +       &
-                         taucldk(k,nw)  + taucldk(k+1,nw) )
-
-        wbarv(l,nw,ng) = ( taureflk(k,nw) + taureflk(k+1,nw) +       &
                          taucldk(k,nw)  + taucldk(k+1,nw)  +       &
+                         tauco2cldk(k,nw)  + tauco2cldk(k+1,nw) )
+
+        wbarv(l,nw,ng) = ( taureflk(k,nw) + taureflk(k+1,nw) +     &
+                         taucldk(k,nw)  + taucldk(k+1,nw)  +       &
+                         tauco2cldk(k,nw)  + tauco2cldk(k+1,nw)  +       &
                         (tray(k,nw)+tray(k+1,nw))*0.9999)/         &
                          dtauv(l,nw,ng)
     end do
@@ -2790,11 +3371,12 @@ do nw=1,l_nspectv
     k              = 2*l+1
     dtauv(l,nw,ng) = dtaukv(k,nw,ng)
     cosbv(l,nw,ng) = ( gvdst(k,nw) * taureflk(k,nw) +              &
-                   gvcld(k,nw) * taucldk(k,nw) ) /             &
+                   gvcld(k,nw) * taucldk(k,nw) +               &
+                   gvco2cld(k,nw) * tauco2cldk(k,nw)  ) /             &
                  ( tray(k,nw)  + taureflk(k,nw) +              &
-                   taucldk(k,nw) )
+                   taucldk(k,nw) + tauco2cldk(k,nw) )
 
-    wbarv(l,nw,ng) = (taureflk(k,nw) + taucldk(k,nw) +             &
+    wbarv(l,nw,ng) = (taureflk(k,nw) + taucldk(k,nw) + tauco2cldk(k,nw) +             &
                   tray(k,nw)*0.9999)/dtauv(l,nw,ng)
 
     !  . . .now the other gauss points, if needed.
@@ -2806,6 +3388,7 @@ do nw=1,l_nspectv
             cosbv(l,nw,ng) = cosbv(l,nw,l_ngauss)
             wbarv(l,nw,ng) = ( taureflk(k,nw) + taureflk(k+1,nw) +     &
                                taucldk(k,nw)  + taucldk(k+1,nw) +      &
+                               tauco2cldk(k,nw)  + tauco2cldk(k+1,nw) +      &
                               (tray(k,nw)+tray(k+1,nw))*0.9999)/       &
                                dtauv(l,nw,ng)
         end do
@@ -2816,7 +3399,8 @@ do nw=1,l_nspectv
         k              = 2*l+1
         dtauv(l,nw,ng) = dtaukv(k,nw,ng)
         cosbv(l,nw,ng) = cosbv(l,nw,l_ngauss)
-        wbarv(l,nw,ng) = ( taureflk(k,nw) + taucldk(k,nw) +          &
+        wbarv(l,nw,ng) = ( taureflk(k,nw) + taucldk(k,nw) +         &
+                           tauco2cldk(k,nw)  +                      &
                          tray(k,nw)*0.9999 ) / dtauv(l,nw,ng)
     end do
 
@@ -2849,11 +3433,13 @@ do nw=1,l_nspectv
     end do
 end do
 
+
 !  Restore old tauref values
 
 do k=1,l_levels+1
     tauref(k) = tauref_save(k)
     taurefcld(k) = taurefcld_save(k)
+    taurefco2cld(k) = taurefco2cld_save(k)
 end do
 
 return
@@ -3158,8 +3744,10 @@ end subroutine optci
 
 subroutine optci15(dtaui,taucumi,plev,tlev,       &
                qrefv,qxidst,qsidst,gidst,cosbi,wbari,tauref,   &
-               tmid,pmid,taugsurf,qh2o,                &
-               qextrefcld,taurefcld,qxicld,qsicld,gicld)
+               tmid,pmid,taugsurf,qh2o,                       &
+               qextrefcld,taurefcld,qxicld,qsicld,gicld,      &
+               qextrefco2cld,taurefco2cld,                    &
+               qxico2cld,qsico2cld,gico2cld)
 !
 ! THIS SUBROUTINE SETS THE OPTICAL CONSTANTS IN THE INFRARED
 ! IT CALCUALTES FOR EACH LAYER, FOR EACH SPECRAL INTERVAL IN THE IR
@@ -3191,8 +3779,6 @@ real*8  :: taugas
 real*8  :: plev(l_levels)
 real*8  :: tlev(l_levels)
 real*8  :: tmid(l_levels), pmid(l_levels), lpmid(l_levels)
-
-
 
 real*8  :: cosbi(l_nlayrad,l_nspecti,l_ngauss)
 real*8  :: wbari(l_nlayrad,l_nspecti,l_ngauss)
@@ -3226,6 +3812,18 @@ real*8  :: tcloud(l_levels,l_nspecti),taureflcld
 real*8  :: taureflk(l_levels+1,l_nspecti)
 real*8  :: taucldk(l_levels+1,l_nspecti)
 
+!     for CO2 clouds
+real*8  :: qxico2cld(l_levels+1,l_nspecti)
+real*8  :: qsico2cld(l_levels+1,l_nspecti)
+real*8  :: gico2cld(l_levels+1,l_nspecti)
+real*8  :: qextrefco2cld(l_levels+1)
+real*8  :: taurefco2cld(l_levels+1)
+real*8  :: taurefco2cld_save(l_levels+1)
+
+real*8  :: tco2cloud(l_levels,l_nspecti)
+
+real*8  :: tauco2cldk(l_levels+1,l_nspecti)
+
 ! fraction of zeros in each spectral interval, as a function of T, P
 
 real*8  :: dt, tt
@@ -3257,6 +3855,7 @@ integer :: j
 dtauki(l_levels+1,:,:)   = 0.0d0
 taureflk(l_levels+1,:) = 0.0d0
 taucldk(l_levels+1,:)  = 0.0d0
+tauco2cldk(l_levels+1,:)  = 0.0d0
 
 dpr = 0.0
 
@@ -3266,15 +3865,18 @@ u = 0.0
 dtauki = 0.0
 taureflk = 0.0
 taucldk = 0.0
+tauco2cldk = 0.0
 taucumi = 0.0
 dtaui = 0.0
 dtaucia = 0.0d0
+
 
 !  save old tauref values
 
 do k=1,l_levels+1
     tauref_save(k) = tauref(k)
     taurefcld_save(k) = taurefcld(k)
+    taurefco2cld_save(k) = taurefco2cld(k)
 end do
 
 !  Determine the total gas opacity throughout the column, for each
@@ -3302,10 +3904,12 @@ do k=2,l_levels
 
     tauref(k)    = tauref(k)    / qrefv(k)
     taurefcld(k) = taurefcld(k) / qextrefcld(k)
+    taurefco2cld(k) = taurefco2cld(k) / qextrefco2cld(k)
 
     do nw=1,l_nspecti
         taeros(k,nw) = tauref(k)    * qxidst(k,nw)
         tcloud(k,nw) = taurefcld(k) * qxicld(k,nw)
+        tco2cloud(k,nw) = taurefco2cld(k) * qxico2cld(k,nw)
 
         !Begin CIA calculation
         if (do_cia) then
@@ -3367,14 +3971,15 @@ do k=2,l_levels
             taugas          = u(k)*10.0d0**ans
 
             taugsurf(nw,ng) = taugsurf(nw,ng) + taugas
-            dtauki(k,nw,ng) = taugas+taeros(k,nw)+tcloud(k,nw)+dtaucia(k,nw)
+            dtauki(k,nw,ng) = taugas+taeros(k,nw)+tcloud(k,nw)+  &  
+                              tco2cloud(k,nw)+dtaucia(k,nw)
         end do
 
         !  now fill in the "clear" part of the spectrum (ng = l_ngauss)
         !  which holds continuum opacity only
 
         ng              = l_ngauss
-        dtauki(k,nw,ng) = taeros(k,nw)+tcloud(k,nw)+dtaucia(k,nw)
+        dtauki(k,nw,ng) = taeros(k,nw)+tcloud(k,nw)+tco2cloud(k,nw)+dtaucia(k,nw)
     end do
 
 end do
@@ -3387,6 +3992,7 @@ do nw=1,l_nspecti
     do k=2,l_levels+1
         taureflk(k,nw) = tauref(k)    * qsidst(k,nw)
         taucldk(k,nw)  = taurefcld(k) * qsicld(k,nw)
+        tauco2cldk(k,nw)  = taurefco2cld(k) * qsico2cld(k,nw)
     enddo
 enddo
 
@@ -3401,7 +4007,8 @@ do nw=1,l_nspecti
         dtaui(l,nw,ng) = dtauki(k,nw,ng) + dtauki(k+1,nw,ng) + 1.d-50
         if(dtaui(l,nw,ng) .gt. 1.0e-9) then
             wbari(l,nw,ng) = (taureflk(k,nw)+ taureflk(k+1,nw) +       &
-                              taucldk(k,nw) + taucldk(k+1,nw)   ) /    &
+                              taucldk(k,nw) + taucldk(k+1,nw)  +       &
+                              tauco2cldk(k,nw) + tauco2cldk(k+1,nw)     ) /    &
                               dtaui(l,nw,ng)
         else
             wbari(l,nw,ng) = 0.0d0
@@ -3409,15 +4016,18 @@ do nw=1,l_nspecti
         endif
 
         tauac = taureflk(k,nw)+ taureflk(k+1,nw) + taucldk(k,nw) +   &
-              taucldk(k+1,nw)
+              taucldk(k+1,nw) + tauco2cldk(k,nw) + tauco2cldk(k+1,nw) 
 
         if(tauac .gt. 0.0) then
             cosbi(l,nw,ng) = ( gidst(k,nw)   * taureflk(k,nw) +        &
                                gidst(k+1,nw) * taureflk(k+1,nw) +      &
                                gicld(k,nw)   * taucldk(k,nw) +         &
-                               gicld(k+1,nw) * taucldk(k+1,nw) ) /     &
+                               gicld(k+1,nw) * taucldk(k+1,nw)  +      &
+                               gico2cld(k,nw)   * tauco2cldk(k,nw) +         &  
+                               gico2cld(k+1,nw) * tauco2cldk(k+1,nw) ) /     &
                               (taureflk(k,nw)+ taureflk(k+1,nw) +      &
-                               taucldk(k,nw) + taucldk(k+1,nw)   )
+                               taucldk(k,nw) + taucldk(k+1,nw)  +      &
+                               tauco2cldk(k,nw) + tauco2cldk(k+1,nw)   )
         else
             cosbi(l,nw,ng) = 0.0d0
         end if
@@ -3432,7 +4042,8 @@ do nw=1,l_nspecti
             dtaui(l,nw,ng) = dtauki(k,nw,ng)+dtauki(k+1,nw,ng)+1.d-50
             if(dtaui(l,nw,ng) .gt. 1.0e-9) then
                 wbari(l,nw,ng) = (taureflk(k,nw)+ taureflk(k+1,nw) +     &
-                                taucldk(k,nw) + taucldk(k+1,nw)   ) /  &
+                                taucldk(k,nw) + taucldk(k+1,nw)    +     &
+                                tauco2cldk(k,nw) + tauco2cldk(k+1,nw) ) /  &
                                 dtaui(l,nw,ng)
             else
                 wbari(l,nw,ng) = 0.0d0
@@ -3477,6 +4088,7 @@ end do
 do k=1,l_levels+1
     tauref(k) = tauref_save(k)
     taurefcld(k) = taurefcld_save(k)
+    taurefco2cld(k) = taurefco2cld_save(k)
 end do
 
 return
@@ -4714,6 +5326,8 @@ real*8 :: rbmin = 0.0001e-6
 real*8 :: rbmax = 1.e-2
 
 real*8 vrat_rt
+real*8 vrat_rtblk
+real*8 vrat_rtco2
 
 real*8 factor
 
@@ -4777,6 +5391,34 @@ do i = 1, nbin_rt-1
     radb_rt(i+1)=((2.*vrat_rt) / (vrat_rt+1.))**(athird) * rad_rt(i)
 enddo
 
+! Bulk scheme properties, 1 nratio, 29 particle sizes
+rad_rtblk(1)      = 1.e-7
+rad_rtblk(20)=  50.e-6          !same first 20 bins as normal, extends 9 sizes larger
+radb_rtblk(1)     = rbmin
+radb_rtblk(nbin_rtblk+1)= rbmax
+
+vrat_rtblk=log(rad_rtblk(20)/rad_rtblk(1)) / float(19) *3.
+vrat_rtblk=exp(vrat_rtblk)
+
+do i = 1, nbin_rtblk-1
+    rad_rtblk(i+1) = rad_rtblk(i) * vrat_rtblk**(athird)
+    radb_rtblk(i+1)=((2.*vrat_rtblk) / (vrat_rtblk+1.))**(athird) * rad_rtblk(i)
+enddo
+
+
+rad_rtco2(1)      = 1.e-7
+rad_rtco2(nbin_rtco2)= 260.e-6
+radb_rtco2(1)     = rbmin
+radb_rtco2(nbin_rtco2+1)= rbmax
+
+vrat_rtco2=log(rad_rtco2(nbin_rtco2)/rad_rtco2(1)) / float(nbin_rtco2-1) *3.
+vrat_rtco2=exp(vrat_rtco2)
+
+do i = 1, nbin_rtco2-1
+    rad_rtco2(i+1) = rad_rtco2(i) * vrat_rtco2**(athird)
+    radb_rtco2(i+1)=((2.*vrat_rtco2) / (vrat_rtco2+1.))**(athird) * rad_rtco2(i)
+enddo
+
 !     Read in the data files the Qext,Qscat and g values for each
 !     size bins and for each spectral interval.
 
@@ -4785,6 +5427,8 @@ if (ames_15band .OR. use_extended_cor_ks) then
     open(61,file=trim(rtdata_path)//'waterCoated_ir_JD_15bands.dat')
     open(62,file=trim(rtdata_path)//'Dust_vis_wolff2010_JD_15bands.dat')
     open(63,file=trim(rtdata_path)//'Dust_ir_wolff2010_JD_15bands.dat')
+    open(64,file=trim(rtdata_path)//'co2Coated_vis_MK_15bands29radii_1nratio.dat')
+    open(65,file=trim(rtdata_path)//'co2Coated_ir_MK_15bands29radii_1nratio.dat')
 
     do j = 1, nratio
         do i = 1, nbin_rt
@@ -4811,10 +5455,25 @@ if (ames_15band .OR. use_extended_cor_ks) then
             qscati_dst(i,l) = qscati_dst(i,l) * factor
         enddo
     enddo
+
+    !read in co2 cloud files
+    do j = 1, nratioblk
+        do i = 1, nbin_rtco2
+            read(64,'(7(e12.7,x))') (qextv_co2cld(j,i,l), l=1,nlonv)
+            read(64,'(7(e12.7,x))') (qscatv_co2cld(j,i,l), l=1,nlonv)
+            read(64,'(7(e12.7,x))') (gv_co2cld(j,i,l), l=1,nlonv)
+            read(65,'(8(e12.7,x))') (qexti_co2cld(j,i,l), l=1,nloni)
+            read(65,'(8(e12.7,x))') (qscati_co2cld(j,i,l), l=1,nloni)
+            read(65,'(8(e12.7,x))') (gi_co2cld(j,i,l), l=1,nloni)
+        enddo
+    enddo
+
     close(60)
     close(61)
     close(62)
     close(63)
+    close(64)
+    close(65)
 
 else
     open(60,file=trim(rtdata_path)//'waterCoated_vis_JD_12bands.dat')
@@ -4854,6 +5513,36 @@ else
   close(63)
 endif
 
+
+if (radactive_cloud_bulk) then
+    open(60,file=trim(rtdata_path)//'h2oIceCoated_vis_KS_15bands29Radii_1nratio.dat')
+    open(61,file=trim(rtdata_path)//'h2oIceCoated_ir_KS_15bands29Radii_1nratio.dat')
+    open(62,file=trim(rtdata_path)//'h2oLiqCoated_vis_KS_15bands29Radii_1nratio.dat')
+    open(63,file=trim(rtdata_path)//'h2oLiqCoated_ir_KS_15bands29Radii_1nratio.dat')
+
+!   read in optical properties for bulk clouds both ice and liquid 
+    do j = 1, nratioblk
+        do i = 1, nbin_rtblk
+            read(60,'(7(e12.7,x))') (qextv_bcld(j,i,l), l=1,nlonv)
+            read(60,'(7(e12.7,x))') (qscatv_bcld(j,i,l), l=1,nlonv)
+            read(60,'(7(e12.7,x))') (gv_bcld(j,i,l), l=1,nlonv)
+            read(61,'(8(e12.7,x))') (qexti_bcld(j,i,l), l=1,nloni)
+            read(61,'(8(e12.7,x))') (qscati_bcld(j,i,l), l=1,nloni)
+            read(61,'(8(e12.7,x))') (gi_bcld(j,i,l), l=1,nloni)
+            read(62,'(7(e12.7,x))') (qextv_blcld(j,i,l), l=1,nlonv)
+            read(62,'(7(e12.7,x))') (qscatv_blcld(j,i,l), l=1,nlonv)
+            read(62,'(7(e12.7,x))') (gv_blcld(j,i,l), l=1,nlonv)
+            read(63,'(8(e12.7,x))') (qexti_blcld(j,i,l), l=1,nloni)
+            read(63,'(8(e12.7,x))') (qscati_blcld(j,i,l), l=1,nloni)
+            read(63,'(8(e12.7,x))') (gi_blcld(j,i,l), l=1,nloni)
+        enddo
+    enddo
+    close(60)
+    close(61)
+    close(62)
+    close(63)
+endif
+
 if (do_cia) then
 
     open(70,file=trim(rtdata_path)//'kgbar_8band_100_800.dat',form='formatted')
@@ -4872,10 +5561,10 @@ if (do_cia) then
 
 endif
 
-    open(60,file=trim(rtdata_path)//'waterCoatedQ_Tbright_MK.dat')
-    open(61,file=trim(rtdata_path)//'DustQ_Tbright_MK.dat')
+open(60,file=trim(rtdata_path)//'waterCoatedQ_Tbright_MK.dat')
+open(61,file=trim(rtdata_path)//'DustQ_Tbright_MK.dat')
 
-  do j= 1, nratio
+do j= 1, nratio
     do i = 1, nbin_rt
       read(60,'(5(e12.7,x))') (qextTb_cld(j,i,l),l=1,5)
       read(60,'(5(e12.7,x))') (qscatTb_cld(j,i,l),l=1,5)
@@ -4883,18 +5572,22 @@ endif
   !!!   print*,qextTb_cld(j,i,1),qextTb_cld(j,i,2),qextTb_cld(j,i,3),&
   !!!          qextTb_cld(j,i,4),qextTb_cld(j,i,5)
     enddo
-  enddo
+enddo
 
-    do i = 1, nbin_rt
+do i = 1, nbin_rt
       read(61,'(5(e12.7,x))') (qextTb_dst(i,l),l=1,5)
       read(61,'(5(e12.7,x))') (qscatTb_dst(i,l),l=1,5)
       read(61,'(5(e12.7,x))') (gTb_dst(i,l),l=1,5)
 !!!     print*,qextTb_dst(i,1),qextTb_dst(i,2),qextTb_dst(i,3),&
 !!!            qextTb_dst(i,4),qextTb_dst(i,5)
-    enddo
+enddo
 
-  close(60)
-  close(61)
+close(60)
+close(61)
+
+open(60,file=trim(rtdata_path)//'QabsFCorrect.dat', access='sequential',form='unformatted')
+read(60) fcorrect
+close(60)
 
 !  rjw    Copy input arrays into working arrays ( real*4 --> real*4)
 
@@ -5846,6 +6539,7 @@ do nt=1,l_ntref
     end do
 end do
 
+
 ! "zero" out 17th (or 33rd) Gauss point
 
       do nt=1,L_NTREF
@@ -5862,6 +6556,7 @@ end do
           end do
         end do
       end do
+
 
       return
       end subroutine initinterp

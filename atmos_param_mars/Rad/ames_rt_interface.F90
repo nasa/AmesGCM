@@ -2,7 +2,7 @@ module ames_rt_interface
 ! module to interface FV3 with legacy radiative transfer
 use rtmod_mgcm, only: ames_rt_driver, qextv, l_nrefv, l_nspecti, scale_by_scon
 use field_manager_mod,  only: MODEL_ATMOS, parse, find_field_index
-use aerosol_util_mod, only: do_moment_dust
+use aerosol_util_mod, only: do_moment_dust, do_bulk_water
 use astronomy_mod, only: semi_major_axis
 
 implicit none
@@ -17,13 +17,13 @@ subroutine ames_rt(is,js,id,jd,kd,ntrace,p_half,p_full,             &
                t,tsurf,r,trans,flx_sfc,                             &
                albedo,sfc_emiss,coszro,                             &
                dustref,dustref_bin,dustref_fix,                     &
-               cldref,cldicebin,                                    &
+               cldref,cldco2ref,cldicebin,                          &
                dosw, dolw,                                          &
                rorbit,                                              &
                heatra,hsw,out_solar_flx,                            &
                rsolar,                                              &
                irupflx,irdnflx,swupflx,swdnflx,swnetflx,irnetflx,   &
-               taudust,taucloud,taudust_mom,                        &
+               taudust,taucloud,tauco2cloud,taudust_mom,            &
                lw_heating_band,lw_15umHR,diag,tstrat_in,            &
                tstrat_dt,                                           &
                taudust_reff,taudust_fix,                            &
@@ -40,7 +40,8 @@ real,intent(in),    dimension(id,jd,kd,ntrace) :: r        ! tracers [*/kg]
 real,intent(inout), dimension(id,jd,kd)   :: dustref       ! output dust opacity from RT
 real,intent(in),    dimension(id,jd,kd)   :: dustref_fix   ! input fixed dust opacity
 real,intent(in),    dimension(id,jd,kd)   :: dustref_bin   ! input bin dust opacity
-real,intent(inout), dimension(id,jd,kd)   :: cldref        ! output bin cloud opacity from RT
+real,intent(inout), dimension(id,jd,kd,2)   :: cldref        ! output cloud opacity from RT
+real,intent(inout), dimension(id,jd,kd)   :: cldco2ref     ! output co2 cloud opacity from RT
 real, intent(in),   dimension(id,jd,kd)   :: cldicebin     ! input bin cloud opacity
 real,intent(in),    dimension(id,jd)      :: albedo, &     ! surface albedo
                                             sfc_emiss, &   ! surface emissivity
@@ -68,9 +69,10 @@ real,intent(out), dimension(size(t,1),size(t,2),3) :: tbands            !     br
 
 !   Opacities TB18c
 real,intent(inout), dimension(size(t,1),size(t,2),2) :: taudust, &      ! total column dust opacity
-                                                    taucloud, &     ! total column dust opacity
+                                                    tauco2cloud, &     ! total column co2 cloud opacity
                                                     taudust_mom, &     ! moment dust column dust opacity
                                                     taudust_fix     ! fixed dust column dust opacity
+real,intent(inout), dimension(size(t,1),size(t,2),4) :: taucloud     ! total column h2o cloud opacity
 real,intent(out), dimension(size(r,1),size(r,2),size(r,4),2) :: taudust_reff  ! moment column dust opacity by effective radius
 real, intent(in) :: rsolar, &        ! total solar constant from FV3
                     rorbit          ! Mars-Sun distance
@@ -102,11 +104,17 @@ real :: swfactor,sfmars
 integer :: ie, je
 integer :: i,j,k,n,n2
 integer :: nh2o
+integer :: nice_blk
+integer :: nco2
 real :: dnvsol
 logical :: do_tstrat = .false.
 real :: tstrat_pass
 real, dimension(size(r,4),2) :: taudust_tmp
 
+real :: mwratio
+real, parameter :: mwco2 = 4.41D-2
+real, parameter :: mwh2o = 1.80153D-2
+    
 ie = size(t,1)
 je = size(t,2)
 nz = size(t,3)
@@ -125,7 +133,9 @@ irnetflx = 0.
 flx_sfc = 0.
 taudust = 0.
 taucloud = 0.
+tauco2cloud = 0.
 taudust_reff = 0.
+mwratio = mwco2/mwh2o
 taudust_fix = 0.
 
 ! --Set no dust case --
@@ -144,9 +154,15 @@ if (do_moment_dust) then
     nma_cor= find_field_index( MODEL_ATMOS, 'cor_mass_mom' )
     nnb_dst= find_field_index( MODEL_ATMOS, 'dst_num_mom' )
     nnb_cld= find_field_index( MODEL_ATMOS, 'ice_num_mom' )
+elseif (do_bulk_water) then
+    nh2o= find_field_index( MODEL_ATMOS, 'vap_mass_blk' )
+    nice_blk = find_field_index( MODEL_ATMOS, 'ice_mass_blk' )
 else
     nh2o= find_field_index( MODEL_ATMOS, 'h2o_vapor' )
 endif
+
+! Get the index of the CO2 cloud tracer
+nco2= find_field_index( MODEL_ATMOS, 'co2_cloud' )
 
 do i=1,id
     do j=1,jd
@@ -172,7 +188,7 @@ do i=1,id
             pl(n)= p_full(i,j,k)
             pl(n+1)=p_half(i,j,k+1)
             if (nh2o .ge. 1) then
-                qh2o(n)=r(i,j,k,nh2o)
+                qh2o(n)=mwratio*r(i,j,k,nh2o)
             else
                 qh2o(n)=0.d0
             endif
@@ -183,7 +199,6 @@ do i=1,id
             end if
         enddo
 
-        QH2O(1:2*nz+3) = 0d0
 
         tl(1:3)=t(i,j,1)
         albi = 1.-sfc_emiss(i,j)
@@ -210,6 +225,7 @@ do i=1,id
                    qtrace=r(i,j,:,:),cldice_bin= cldicecol,             &
                    taudust_diagARG=taudust(i,j,:),                  &
                    taucloud_diagARG=taucloud(i,j,:),                &
+                   tauco2cloud_diagARG=tauco2cloud(i,j,:),                &
                    fmnetvARG=fmnetv,fluxdniARG=fluxdni,             &
                    outsolARG=out_solar_flx(i,j),                    &
                    swtotARG=sfmars,fluxupvARG=swupflx(i,j,:),       &
@@ -217,10 +233,13 @@ do i=1,id
                    fluxupiARG=irupflx(i,j,:),fmnetiARG=fmneti,      &
                    lw_heating_spec=lw_heating_spec,htrt2=htrt2,     &
                    diag=diag,taurefd_out=dustref(i,j,:),            &
-                   taurefc_out=cldref(i,j,:),                       &
+                   taurefc_out=cldref(i,j,:,:),                       &
+                   taurefco2c_out=cldco2ref(i,j,:),                 &
                    taudust_momARG=taudust_mom(i,j,:),               &
                    taudust_fixARG=taudust_fix(i,j,:),               &
                    tstrat_dt=tstrat_dt(i,j),                        &
+                   nco2=nco2,                                       &
+                   nice_blk=nice_blk,                               &
                    taudust_reffARG=taudust_tmp(:,:),                &
                    tbands= tbands(i,j,:)                )
 

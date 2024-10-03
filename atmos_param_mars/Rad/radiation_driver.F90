@@ -69,7 +69,6 @@ namelist /radiation_driver_nml/ use_forget_swheat, use_dust_lwheat,        &
                                 do_diurnal_avg_rad,                        &
                                 use_ames_lw_rad,  use_ames_sw_rad,         &
                                 use_newton_damping, fixed_calender_date,   &
-                                do_rad_diagnostic_calc,                    &
                                 nchan_swx,  rampup_rad
 
 !---------- the following are specific to the GFDL SW and LW radiation code------
@@ -107,17 +106,15 @@ integer :: id_lwheat1,id_lwheat2,id_lwheat3, &
            id_lwheat4,id_lwheat5,id_lwheat6, &
            id_lwheat7,id_lwheat8,id_lw15HR
 
-integer :: id_ir_flx_d, id_solar_flx_d, id_swheat_d, id_lwheat_d, id_opac_d
-integer :: id_irupflx_d, id_irdnflx_d, id_swupflx_d, id_swdnflx_d
-integer :: id_swnetflx_d, id_irnetflx_d
 integer :: id_irupflx, id_irdnflx, id_swupflx, id_swdnflx
 integer :: id_irupflx_top, id_irdnflx_top, id_swupflx_top, id_swdnflx_top
 integer :: id_irupflx_sfc, id_irdnflx_sfc, id_swupflx_sfc, id_swdnflx_sfc
 integer :: id_swnetflx, id_irnetflx
 integer :: id_taudust_VIS,id_taudust_IR
-integer :: id_taucloud_VIS,id_taucloud_IR
+integer :: id_taucloud_VIS,id_taucloud_IR, id_taucloud_12um, id_taucloud_UV
+integer :: id_tauco2cloud_VIS,id_tauco2cloud_IR
 integer :: id_trad7, id_trad23, id_trad32
-integer :: id_dustref, id_cldref, id_dso
+integer :: id_dustref, id_cldref, id_cldco2ref, id_dso, id_cldref_uv
 integer, dimension(:), allocatable :: id_taudust_reff_VIS, id_taudust_reff_IR
 
 
@@ -137,7 +134,8 @@ subroutine radiation_driver ( is, js, lon, lat, dt, Time,                 &
                                p_half, p_full, z_half, tsfc, albedo,      &
                                sfc_emiss, t, r, tdt, rdt,                 &
                                swfsfc, lwfsfc, cosz, tdtlw,tdt_rad,       &
-                               taudust, taucloud, taudust_mom, taudust_fix, pref)
+                               taudust, taucloud, tauco2cloud, taudust_mom, & 
+                               taudust_fix, pref)
 !=======================================================
 !  main radiation driver
 !=======================================================
@@ -159,7 +157,8 @@ real, intent(inout), dimension(:,:,:)   :: tdtlw
 real, intent(out),   dimension(:,:)     :: swfsfc, lwfsfc
 real, intent(out),   dimension(:,:)     :: cosz
 real, intent(out),    dimension(:,:,:)   :: tdt_rad
-real, intent(out),    dimension(:,:,:)   :: taudust, taucloud, taudust_mom, taudust_fix
+real, intent(out),    dimension(:,:,:)   :: taudust, taucloud, tauco2cloud
+real, intent(out),    dimension(:,:,:)   :: taudust_mom, taudust_fix
 real, intent(in)                        :: pref
 
 ! Local Variables
@@ -199,12 +198,11 @@ real, dimension(size(t,1),size(t,2),size(t,3))   :: tau_ames, darray
 real, dimension(size(t,1),size(t,2),size(t,3))   :: pf_mb
 real, dimension(size(t,1),size(t,2),size(t,3)+1) :: ph_mb
 
-real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref, cldref
+real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref, cldco2ref
+real, dimension(size(t,1),size(t,2),size(t,3),2)   :: cldref
 real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref_bin, dustref_fix, cldice
 real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref_mom
-real, dimension(size(t,1),size(t,2),size(t,3))   :: tdiag,tnew
-real, dimension(size(t,1),size(t,2),size(p_half,3)) :: tcdiag
-real, dimension(size(t,1),size(t,2))  :: tsdiag
+real, dimension(size(t,1),size(t,2),size(t,3))   :: tnew
 real, dimension(size(t,1),size(t,2))  :: tstrat_dt, tsat
 
 !   currently carrying 3 diagnostic brightness temperatures
@@ -303,7 +301,8 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                            tau_spec,  sscat_spec, gfac_spec,         &
                            dustref_fix)
     dustref(:,:,:) = 0.
-    cldref(:,:,:) = 0.
+    cldref(:,:,:,:) = 0.
+    cldco2ref(:,:,:) = 0.
     nice= ice_bin_indx(1)
     cldice(:,:,:)= r(:,:,:,nice)
 
@@ -319,14 +318,15 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                    tnew,tsfc,rnew,trans,flx_sfc,        &
                    albedo, sfc_emiss, cosz,             &
                    dustref, dustref_bin, dustref_fix,   &
-                   cldref, cldice,                      &
+                   cldref, cldco2ref, cldice,           &
                    use_ames_sw_rad, use_ames_lw_rad,    &
                    r_orbit,                             &
                    heatra,hsw,outflx,                   &
                    rsolar,                              &
                    irupflx,irdnflx,swupflx,swdnflx,     &
                    swnetflx,irnetflx,                   &
-                   taudust,taucloud,taudust_mom,        &
+                   taudust,taucloud,                    &
+                   tauco2cloud, taudust_mom,            &
                    lw_heating_band,lw_15umHR,.false.,   &
                    tstrat(is:ie,js:je),                 &
                    tstrat_dt,                           &
@@ -392,11 +392,16 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     endif
 
     !           write out the normalized cloud field
-    opac(:,:,:)= cldref(:,:,:) ! / delp(:,:,:)
+    opac(:,:,:)= cldref(:,:,:,1) ! / delp(:,:,:)
     if (id_cldref > 0) used = send_data ( id_cldref, opac,  time, is, js )
+    !           write out the normalized cloud field
+    opac(:,:,:)= cldref(:,:,:,2) ! / delp(:,:,:)
+    if (id_cldref_uv > 0) used = send_data ( id_cldref_uv, opac,  time, is, js )
 
+    ! write out co2 cloud field
+    opac(:,:,:)= cldco2ref(:,:,:) ! / delp(:,:,:)
+    if (id_cldco2ref > 0) used = send_data ( id_cldco2ref, opac,  time, is, js )
 
-    if( id_areo > 0 ) used= send_data( id_areo, areoout , Time )
 
     !            Combine lwave and shortwave fluxes
     if (id_swheat > 0)  used = send_data ( id_swheat, hsw,    Time, is, js)
@@ -405,6 +410,10 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     if (id_taudust_IR > 0)  used = send_data ( id_taudust_IR,taudust(:,:,2),   Time, is, js)
     if (id_taucloud_VIS > 0)  used = send_data ( id_taucloud_VIS,taucloud(:,:,1),   Time, is, js)
     if (id_taucloud_IR > 0)  used = send_data ( id_taucloud_IR,taucloud(:,:,2),   Time, is, js)
+    if (id_taucloud_12um > 0)  used = send_data ( id_taucloud_12um,taucloud(:,:,3),   Time, is, js)
+    if (id_taucloud_UV > 0)  used = send_data ( id_taucloud_UV,taucloud(:,:,4),   Time, is, js)
+    if (id_tauco2cloud_VIS > 0)  used = send_data ( id_tauco2cloud_VIS,tauco2cloud(:,:,1),   Time, is, js)
+    if (id_tauco2cloud_IR > 0)  used = send_data ( id_tauco2cloud_IR,tauco2cloud(:,:,2),   Time, is, js)
     !           write out moment column dust field by effective radius
     do nt=1,ndust_mass
         ndx= dust_mass_indx(nt)
@@ -510,151 +519,6 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
 
     endif
 
-
-!                ---------------- Diagnostic calculation -----------------
-    if( do_rad_diagnostic_calc ) then
-
-        !            This is an example of calling a new radiation calculation
-        !        In this case, the opacity is replaced by the dust opacity only,
-        !       thus allowing an assessment of radiatively active water ice clouds
-
-        !        tau_spec(:,:,:,1)= dustref(:,:,:)
-        if (kd.eq.28) then
-            dustref(:,:,1:6) = 0.
-            dustref(:,:,7) = .00002
-            dustref(:,:,8) = .00008
-            dustref(:,:,9) = .00011
-            dustref(:,:,10) = .00023
-            dustref(:,:,11) = .0004
-            dustref(:,:,12) = .00055
-            dustref(:,:,13) = .00066
-            dustref(:,:,14) = .00079
-            dustref(:,:,15) = .00106
-            dustref(:,:,16) = .00116
-            dustref(:,:,17) = .0011
-            dustref(:,:,18) = .001105
-            dustref(:,:,19) = .00111
-            dustref(:,:,20) = .001115
-            dustref(:,:,21) = .001118
-            dustref(:,:,22) = .001105
-            dustref(:,:,23) = .001088
-            dustref(:,:,24) = .001082
-            dustref(:,:,25:28) = .001081
-        endif
-        ! do no dust
-        !         dustref = 0.
-        !         dustref(:,:,1:10) = 0.
-
-
-        !   Set the diagnostic test temperature
-        if (kd.eq.28) then
-            tsdiag(:,:) = 236.623
-            tdiag(:,:,1) = 150.
-            tdiag(:,:,2) = 147.
-            tdiag(:,:,3) = 142.
-            tdiag(:,:,4) = 143.
-            tdiag(:,:,5) = 141.
-            tdiag(:,:,6) = 140.
-            tdiag(:,:,7) = 140.7
-            tdiag(:,:,8) = 146.
-            tdiag(:,:,9) = 152.
-            tdiag(:,:,10) = 160.5
-            tdiag(:,:,11) = 169.5
-            tdiag(:,:,12) = 175.
-            tdiag(:,:,13) = 181.
-            tdiag(:,:,14) = 190.
-            tdiag(:,:,15) = 196.
-            tdiag(:,:,16) = 202.
-            tdiag(:,:,17) = 207.
-            tdiag(:,:,18) = 213.5
-            tdiag(:,:,19) = 217.5
-            tdiag(:,:,20) = 220.5
-            tdiag(:,:,21) = 222.5
-            tdiag(:,:,22) = 223.5
-            tdiag(:,:,23) = 223.
-            tdiag(:,:,24) = 223.3
-            tdiag(:,:,25) = 224.2
-            tdiag(:,:,26) = 224.9
-            tdiag(:,:,27) = 225.6
-            tdiag(:,:,28) = 226.1
-            tcdiag(:,:,1:28) = tdiag(:,:,:)
-            tcdiag(:,:,29) = tsdiag(:,:)
-        endif
-    !       tdiag(:,:,:) = 180.
-    !       tcdiag(:,:,:)= 180.
-    !       tsdiag(:,:)= 180.
-
-        cldref(:,:,:)= 0.0
-
-        pf_mb= p_full * 0.01
-        ph_mb= p_half * 0.01
-
-        call  ames_rt(is,js,id,jd,kd,ntrace,ph_mb,pf_mb,  &
-                    tdiag,tsdiag,rnew,trans,flx_sfc,&
-                    albedo, sfc_emiss, cosz, dustref, &
-                       dustref_bin, dustref_fix, cldref, cldice, &
-                       use_ames_sw_rad, use_ames_lw_rad, r_orbit,&
-                       heatra,hsw,outflx,rsolar, &
-                       irupflx_d,irdnflx_d, &
-                       swupflx_d,swdnflx_d,swnetflx_d,&
-                       irnetflx_d,taudust,taucloud,taudust_mom, &
-                       lw_heating_band,lw_15umHR,.true., &
-                       tstrat(is:ie,js:je), tstrat_dt,taudust_reff, &
-                   taudust_fix,                         &
-                       tbands     ) 
-
-
-    !           Save the diagnostic heating rates and surface fluxes
-        if (id_swheat_d > 0)  used = send_data ( id_swheat_d, hsw,    Time, is, js)
-        if (id_lwheat_d > 0)  used = send_data ( id_lwheat_d, heatra, Time,  is, js)
-
-        if (id_ir_flx_d     > 0)  used = send_data ( id_ir_flx_d,    flx_sfc, Time, is, js)
-        if (id_solar_flx_d  > 0)  used = send_data ( id_solar_flx_d, trans, Time, is, js)
-
-    !!! write out diagnostic fluxes
-    ! ,,,
-        if (id_irupflx_d > 0)  then
-            fluxout(:,:,:) = irupflx_d(:,:,2:kd+1)
-            used = send_data ( id_irupflx_d, fluxout,    Time, is, js)
-        endif
-        if (id_irdnflx_d > 0)  then
-            fluxout(:,:,:) = irdnflx_d(:,:,2:kd+1)
-            used = send_data ( id_irdnflx_d, fluxout,    Time, is, js)
-        endif
-        if (id_swupflx_d > 0)  then
-            fluxout(:,:,:) = swupflx_d(:,:,2:kd+1)
-            used = send_data ( id_swupflx_d, fluxout,    Time, is, js)
-        endif
-        if (id_swdnflx_d > 0)  then
-            fluxout(:,:,:) = swdnflx_d(:,:,2:kd+1)
-            used = send_data ( id_swdnflx_d, fluxout,    Time, is, js)
-        endif
-        if (id_swnetflx_d> 0)  then
-            fluxout(:,:,:) = swnetflx_d(:,:,2:kd+1)
-            used = send_data ( id_swnetflx_d,fluxout,   Time, is, js)
-        endif
-        if (id_irnetflx_d> 0)  then
-            fluxout(:,:,:) = irnetflx_d(:,:,2:kd+1)
-            used = send_data ( id_irnetflx_d,fluxout,   Time, is, js)
-        endif
-
-        if (id_taudust_VIS > 0)  used = send_data ( id_taudust_VIS,taudust(:,:,1),   Time, is, js)
-        if (id_taudust_IR > 0)  used = send_data ( id_taudust_IR,taudust(:,:,2),   Time, is, js)
-        if (id_taucloud_VIS > 0)  used = send_data ( id_taucloud_VIS,taucloud(:,:,1),   Time, is, js)
-        if (id_taucloud_IR > 0)  used = send_data ( id_taucloud_IR,taucloud(:,:,2),   Time, is, js)
-
-
-        !           Write out the visible opacity field used for diagnostic purposes
-        opac(:,:,:)= dustref(:,:,:) / delp(:,:,:)
-        if (id_opac_d > 0) used = send_data ( id_opac_d, darray,  Time, is, js )
-
-        if (id_alb_d > 0) used = send_data ( id_alb_d, outflx,  Time, is, js )
-
-
-    endif       ! ------------------- End of diagnostic calcs ---------
-
-
-
 else        !    use previously computed heating rates
 
     tdt_rad(:,:,:)= heatrate(is:ie,js:je,:)
@@ -665,6 +529,8 @@ else        !    use previously computed heating rates
 endif
 
 
+
+if (id_areo       > 0)  used = send_data ( id_areo,      areoout , Time )
 if (id_ir_flx     > 0)  used = send_data ( id_ir_flx,    lwfsfc, Time, is, js)
 if (id_solar_flx  > 0)  used = send_data ( id_solar_flx, swfsfc, Time, is, js)
 if (id_tdt_rad    > 0)  used = send_data ( id_tdt_rad,   tdt_rad,    Time, is, js)
@@ -840,10 +706,6 @@ id_opacd = register_diag_field ( model, 'opac_fix', axes(1:3),            &
                                Time, 'visible fixed dust opacity', 'op/Pa', &
                                       missing_value=missing_value )
 
-id_opac_d = register_diag_field ( model, 'opac_d', axes(1:3),        &
-                    Time, 'visible diagnostic dust opacity', 'op/Pa', &
-                                      missing_value=missing_value )
-
 id_vis_od = register_diag_field ( model, 'vis_od', axes(1:2),      &
                                Time, 'visible bin dust opacity', 'total', &
                                       missing_value=missing_value )
@@ -854,6 +716,14 @@ id_dustref = register_diag_field ( model, 'dustref', axes(1:3),      &
 
 id_cldref = register_diag_field ( model, 'cldref', axes(1:3),      &
                                Time, 'visible water ice cloud opacity', 'op/level', &
+                                      missing_value=missing_value )
+
+id_cldref_uv = register_diag_field ( model, 'cldref_uv', axes(1:3),      &
+                               Time, 'UV water ice cloud opacity', 'op/level', &
+                                      missing_value=missing_value )
+
+id_cldco2ref = register_diag_field ( model, 'cldco2ref', axes(1:3),      &
+                               Time, 'visible co2 ice cloud opacity', 'op/level', &
                                       missing_value=missing_value )
 
 id_dso = register_diag_field ( model, 'dso', axes(1:3),      &
@@ -867,50 +737,6 @@ id_vis_od_dust = register_diag_field ( model, 'vis_od_dust', axes(1:2), &
 id_tdt_rad = register_diag_field ( model, 'tdt_rad', axes(1:3),      &
                     Time, 'radiative temperature tendency', 'K/s', &
                                       missing_value=missing_value )
-
-id_ir_flx_d = register_diag_field ( model, 'sfcirflx_d', axes(1:2),  &
-                                 Time, 'diagnostic net surface downward IR flux', 'W/m2', &
-                                       missing_value=missing_value )
-
-id_solar_flx_d = register_diag_field ( model, 'sfcswflx_d', axes(1:2), &
-                                 Time, 'diagnostic net surface downward VIS flux', 'W/m2',  &
-                                       missing_value=missing_value )
-
-id_alb_d = register_diag_field ( model, 'alb_d', axes(1:2), &
-                                 Time, 'diagnostic albedo', 'None',  &
-                                       missing_value=missing_value )
-
-id_swheat_d = register_diag_field ( model, 'swheat_d', axes(1:3),    &
-                                       Time, 'diagnostic VIS heating', 'K/s', &
-                                      missing_value=missing_value )
-
-id_lwheat_d = register_diag_field ( model, 'lwheat_d', axes(1:3),    &
-                                       Time, 'diagnostic IR heating', 'K/s', &
-                                      missing_value=missing_value )
-
-id_irupflx_d = register_diag_field ( model, 'irupflx_d', axes(1:3),&
-                                       Time, 'diagnostic upwards IR flux diag', 'W/m2', &
-                                      missing_value=missing_value )
-
-id_irdnflx_d = register_diag_field ( model, 'irdnflx_d', axes(1:3),&
-                                       Time, 'diagnostic downwards IRR flux diag', 'W/m2', &
-                                      missing_value=missing_value )
-
-id_swupflx_d = register_diag_field ( model, 'swupflx_d',axes(1:3),&
-                                       Time, 'diagnostic upwards VIS flux diag', 'W/m2', &
-                                      missing_value=missing_value )
-
-id_swdnflx_d = register_diag_field ( model, 'swdnflx_d', axes(1:3),&
-                                       Time, 'diagnostic downwards VIS flux diag', 'W/m2', &
-                                      missing_value=missing_value )
-
-id_swnetflx_d = register_diag_field ( model, 'swnetflx_d', axes(1:3),&
-                              Time, 'diagnostic net VIS flux diag', 'W/m2', &
-                              missing_value=missing_value )
-
-id_irnetflx_d = register_diag_field ( model, 'irnetflx_d', axes(1:3),&
-                              Time, 'diagnostic net IR flux diag', 'W/m2', &
-                              missing_value=missing_value )
 
 id_irupflx = register_diag_field ( model, 'irupflx', axes(1:3),&
                                        Time, 'upwards IR flux', 'W/m2', &
@@ -982,6 +808,22 @@ id_taucloud_VIS = register_diag_field ( model, 'taucloud_VIS', axes(1:2),&
 
 id_taucloud_IR = register_diag_field ( model, 'taucloud_IR', axes(1:2),&
                               Time, 'Column cloud opacity IR', 'op', &
+                              missing_value=missing_value )
+
+id_taucloud_12um = register_diag_field ( model, 'taucloud_12um', axes(1:2),&
+                              Time, 'Column cloud opacity 12um abs only', 'op', &
+                              missing_value=missing_value )
+
+id_taucloud_UV = register_diag_field ( model, 'taucloud_UV', axes(1:2),&
+                              Time, 'Column cloud opacity UV', 'op', &
+                              missing_value=missing_value )
+
+id_tauco2cloud_VIS = register_diag_field ( model, 'tauco2cloud_VIS', axes(1:2),&
+                              Time, 'Column CO2 cloud opacity VIS', 'op', &
+                              missing_value=missing_value )
+
+id_tauco2cloud_IR = register_diag_field ( model, 'tauco2cloud_IR', axes(1:2),&
+                              Time, 'Column CO2 cloud opacity IR', 'op', &
                               missing_value=missing_value )
 
 id_trad7 = register_diag_field ( model, 'trad7', axes(1:2),          &

@@ -2,7 +2,7 @@ module initracer_mod
 !
 !  module to initialize tracers
 !
-	
+
 use constants_mod, only: grav,cp=>cp_air,rgas=>rdgas,pi,kboltz
 use field_manager_mod, only: MODEL_ATMOS, parse, find_field_index, num_tags, find_tagging_index
 use tracer_manager_mod, only: query_method, get_tracer_index,  &
@@ -37,9 +37,8 @@ real*8, public :: dev_dt, &                              ! standard deviation of
 real*8, public, parameter :: mh2o = 18.01e-3, &          ! molar weight of water [kg]
                 rgp = 8.3143, &                          ! perfect gas constant
                 vo1 = mh2o / dpden_ice , &               ! volume of water molecule [m^3]
-                nav = 6.02e23, &                         ! Avogadro number
+                nav = 6.02e23                            ! Avogadro number
 !                kbz = rgp / nav, &                       ! Boltzmann constant
-                mteta = 0.965                            ! Contact parameter ( m=cos(theta) orig .975 )
 real*8, public, parameter :: desorp = 0.288e-19, &       ! Activation energy for desorption of water on a dust-like substrate (J/molecule)
                 surfdif = desorp / 10., &                ! Estimated activation energy for surface diffusion of water molecules (J/molecule)
                 nus = 1.e+13, &                          ! Jump frequency of a water molecule (s-1)
