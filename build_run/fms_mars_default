@@ -25,7 +25,7 @@ echo "Datadir =" $datadir
 
 set platform    = intel     # Your platform
 set TILE_LAYOUT = 3,4       # 6 * layout 1 * layout 2 <= total requested cpus (select*ncpus)
-set model_executable = $cwd/exec.$platform.mars3.0/FMS_MARS.x           # Path to model
+set model_executable = $cwd/exec.$platform.mars3.2/FMS_MARS.x           # Path to model
 set homedir     = $cwd
 
 set NCX         = 24        # number of horizontal grid cells per cube face column or row
@@ -418,6 +418,8 @@ cp $datadir/waterCoated_vis_* .
 cp $datadir/waterCoated_ir_* .
 cp $datadir/Dust_vis_wolff2010_* .
 cp $datadir/Dust_ir_wolff2010_* .
+
+cp $datadir/QabsFCorrect.dat .
 
 cp $datadir/DustQ_Tbright_MK.dat                DustQ_Tbright_MK.dat
 cp $datadir/waterCoatedQ_Tbright_MK.dat         waterCoatedQ_Tbright_MK.dat

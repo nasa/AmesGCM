@@ -27,7 +27,7 @@ set optim = ""
 set cppDefs = "-DMARS_GCM -DMARS_SURFACE -DRELEASE"
 
 #--------------------------------------------------------------------------------------------------------
-set execdir = $cwd/exec.$platform.mars3.0  # where code is compiled and executable is created
+set execdir = $cwd/exec.$platform.mars3.2  # where code is compiled and executable is created
 set execname = FMS_MARS.x
 set executable = $execdir/$execname
 
@@ -38,9 +38,9 @@ setenv NC_BLKSZ 64K
 #--------------------------------------------------------------------------------------------------------
 #choose the template file based on optimization flag
 if ( "$optim" =~ *well ) then
-set template = $cwd/../bin/mkmf.template.$platform.avx
-else if ( "$optim" =~ *bridge ) then
 set template = $cwd/../bin/mkmf.template.$platform.avx2
+else if ( "$optim" =~ *bridge ) then
+set template = $cwd/../bin/mkmf.template.$platform.avx
 endif
 
 #--------------------------------------------------------------------------------------------------------
