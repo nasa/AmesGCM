@@ -158,7 +158,7 @@ logical :: rayleighTropical_flag = .false.              ! flag: tropical Rayleig
 real    :: rayleighTropical_tau_days  = 1.0             ! damping time scale for the sponge (days)
 real    :: rayleighTropical_pres_inflex = 0.1                      ! Raleigh damping inflection pressure level (Pa)
 real    :: rayleighTropical_pres_cutoff= 1.0                ! bottom of tropical sponge layer. Below this Rayleight damping is zero (Pa)
-real    :: rayleighTropical_lat_width= 30.0                      ! latitude width of tropical Rayleigh damping
+real    :: rayleighTropical_lat_width= 30.0                      ! latitude width of tropical Rayleigh damping (deg)
 
 logical :: do_vert_diff = .true.               ! flag: do vertical diffusion
 logical :: do_ames_pbl = .true.                ! flag: do ames MY2.0 PBL
@@ -1162,7 +1162,7 @@ if (nml_switch(GW_drag_TOG,1)) then     ! Palmer 1986
     vdt = vdt + vdt_top * topo_drag_fac
 endif
 
-if (nml_switch(GW_drag_TOG,3)) then     ! Alexander 1999
+if (nml_switch(GW_drag_TOG,2)) then     ! Alexander 1999
     tdt_top = 0.
     udt_top = 0.
     vdt_top = 0.
@@ -1798,7 +1798,7 @@ if (nml_switch(GW_drag_TOG,1)) then
                     missing_value=missing_value)
 endif
 
-if (nml_switch(GW_drag_TOG,3)) then
+if (nml_switch(GW_drag_TOG,2)) then
     if (mcpu0) print *,  'Calling  cg_drag_init ...'
 
     call cg_drag_init (phys_domain, lon, lat, pstd, Time=Time, axes=axes)

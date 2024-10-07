@@ -28,6 +28,8 @@ public :: cloud_physics, cloud_physics_init, cloud_physics_end, &
 public :: photochem_driver
 public :: init_null_phys
 public :: nltecool
+public ::  blkh2o_driver,blkh2o_driver_init
+public :: co2micro_driver,co2micro_driver_init
 
 integer ::  id_wcol, id_cldcol, id_cld_r, id_rsat
 real, dimension(:,:,:),   allocatable, save  ::  sfc_dust_mass
@@ -620,7 +622,7 @@ end subroutine nltecool
 ! *****************************************************************
 
 subroutine blkh2o_driver(is, js, Time, p_half, p_full, t, tdt, r, rdt, stress, tg, dt,  &
-                      rhouch, rdt, rkh, tdt, checkcons)
+                      rhouch, rdt_out, rkh, tdt_out, checkcons)
 
 integer, intent(in)  :: is, js
 type(time_type), intent(in)             :: Time
@@ -632,12 +634,12 @@ real, intent(in),    dimension(:,:)     :: rhouch,stress
 real*8, intent(in), dimension(:,:) :: tg      !     Ground Temperature (K)
 real*8, intent(in) :: dt                      !     NDT time step
 real*8, intent(in), dimension(:,:,:) :: rkh    !     PBL Eddy coefficient for sedimentation (set to 0 for now)
-real*8, intent(in), dimension(:,:,:,:) :: rdt !     tracer tendencies (kg/kg/s)
-real*8, intent(in), dimension(:,:,:) :: tdt   !     Temperature tendencies (K/s)
+real*8, intent(in), dimension(:,:,:,:) :: rdt,rdt_out !     tracer tendencies (kg/kg/s)
+real*8, intent(in), dimension(:,:,:) :: tdt,tdt_out   !     Temperature tendencies (K/s)
 logical, intent(in) :: checkcons
 
 call error_mesg('blkh2o_driver','The null version of blkh2o_driver should not be called.',FATAL)
-
+end subroutine blkh2o_driver
 ! *****************************************************************     
 ! *****************************************************************
 
@@ -652,30 +654,30 @@ integer, intent(in)                   :: axes(4)
 type(time_type), intent(in) :: Time
 
 call error_mesg('blkh2o_driver_init','The null version of blkh2o_driver_init should not be called.',FATAL)
-
+end subroutine blkh2o_driver_init
 ! *****************************************************************     
 ! *****************************************************************
 
 subroutine co2micro_driver(is,js,Time,p_half,p_full,t,tdt,r,rdt, &
-                    stress,tsurf,dt,rhouch,rdt,precip,dmass,rkh, &
-                    tdt,checkcons)
+                    stress,tsurf,dt,rhouch,rdt_out,precip,dmass,rkh, &
+                    tdt_out,checkcons)
 
 integer, intent(in)  :: is, js
 type(time_type), intent(in)             :: Time
 real*8, intent(in), dimension(:,:,:) :: p_half
 real*8, intent(in), dimension(:,:,:) :: p_full
-real*8, intent(in), dimension(:,:,:) :: tsurf
+real*8, intent(in), dimension(:,:,:) :: t
 real*8, intent(in), dimension(:,:,:,:) :: r
 real, intent(in),    dimension(:,:)     :: rhouch, stress
-real*8, intent(in), dimension(:,:) :: tg      !     Ground Temperature (K)
+real*8, intent(in), dimension(:,:) :: tsurf,precip      !     Ground Temperature (K)
 real*8, intent(in) :: dt                      !     NDT time step
 real*8, intent(in), dimension(:,:,:) :: rkh, dmass
-real*8, intent(in), dimension(:,:,:,:) :: rdt
-real*8, intent(in), dimension(:,:,:) :: tdt 
+real*8, intent(in), dimension(:,:,:,:) :: rdt,rdt_out
+real*8, intent(in), dimension(:,:,:) :: tdt,tdt_out
 logical, intent(in) :: checkcons
 
 call error_mesg('co2micro_driver','The null version of co2micro_driver should not be called.',FATAL)
-
+end subroutine co2micro_driver
 ! *****************************************************************     
 ! *****************************************************************
 
@@ -690,7 +692,7 @@ integer, intent(in)                   :: axes(4)
 type(time_type), intent(in) :: Time
 
 call error_mesg('co2micro_driver_init','The null version of co2micro_driver_init should not be called.',FATAL)
-
+end subroutine co2micro_driver_init
 ! *****************************************************************     
 ! *****************************************************************
 end module null_physics_mod
