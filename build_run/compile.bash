@@ -31,7 +31,7 @@ optim=""
 cppDefs="-DMARS_GCM -DMARS_SURFACE -DRELEASE"
 
 #--------------------------------------------------------------------------------------------------------
-execdir="$cwd/exec.$platform.mars3.1"  # where code is compiled and executable is created
+execdir="$cwd/exec.$platform.mars3.2"  # where code is compiled and executable is created
 execname="FMS_MARS.x"
 executable="$execdir/$execname"
 

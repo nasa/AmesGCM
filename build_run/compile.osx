@@ -24,7 +24,7 @@ setenv MPI_LIB "/opt/local/lib/openmpi-gcc11"
 set cppDefs = "-DMARS_GCM -DMARS_SURFACE -DRELEASE"
 
 #--------------------------------------------------------------------------------------------------------
-set execdir = $cwd/exec.$platform.mars3.1  # where code is compiled and executable is created
+set execdir = $cwd/exec.$platform.mars3.2  # where code is compiled and executable is created
 set execname = FMS_MARS.x
 set executable = $execdir/$execname
 
