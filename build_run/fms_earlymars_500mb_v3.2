@@ -16,7 +16,7 @@
 #**************************************************************************************************
 # ====================================== Execution Variables  =====================================
 #**************************************************************************************************
-set name        = fms_earlymars_500mb_v3.1 
+set name        = fms_earlymars_500mb_v3.12
 set scriptname  = $cwd/$name
 set classdir    = am4_earlymars_runs
 set workdir     = /nobackup/$USER/FMS_MARS_runs/$classdir/$name     # Where model is run, output stored
@@ -25,7 +25,7 @@ echo "Datadir =" $datadir
 
 set platform    = intel     # Your platform
 set TILE_LAYOUT = 3,4       # 6 * layout 1 * layout 2 <= total requested cpus (select*ncpus)
-set model_executable = $cwd/exec.$platform.mars3.1/FMS_MARS.x           # Path to model
+set model_executable = $cwd/exec.$platform.mars3.2/FMS_MARS.x           # Path to model
 set homedir     = $cwd
 
 set NCX         = 24        # number of horizontal grid cells per cube face column or row

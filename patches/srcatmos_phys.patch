@@ -1,0 +1,151 @@
+diff --git a/atmos_param/cg_drag/cg_drag.F90 b/atmos_param/cg_drag/cg_drag.F90
+index fa55527..a7bf9d7 100644
+--- a/atmos_param/cg_drag/cg_drag.F90
++++ b/atmos_param/cg_drag/cg_drag.F90
+@@ -75,7 +75,7 @@ integer     :: cg_drag_offset=0   ! offset of calculation from 00Z [ s ]
+                                   ! at 00Z and calculations are not done
+                                   ! every time step
+ 
+-real        :: source_level_pressure= 315.e+02    
++real        :: source_level_pressure= 1.00    
+                                   ! highest model level with  pressure 
+                                   ! greater than this value (or sigma
+                                   ! greater than this value normalized
+@@ -89,22 +89,25 @@ real        :: cmax=99.6          ! maximum phase speed in gravity wave
+ real        :: dc=1.2             ! gravity wave spectral resolution 
+                                   ! [ m/s ]
+                                   ! previous values: 0.6
+-real        :: Bt_0=.003          ! sum across the wave spectrum of 
++real        :: Bt_0=.000          ! sum across the wave spectrum of 
+                                   ! the magnitude of momentum flux, 
+                                   ! divided by density [ m^2/s^2 ]
+             
+ real        :: Bt_aug=.000        ! magnitude of momentum flux divided by density 
+ 
+-real        :: Bt_nh=.003         ! magnitude of momentum flux divided by density   (SH limit )
++real        :: Bt_nh=.000        ! magnitude of momentum flux divided by density   (SH limit )
+ 
+-real        :: Bt_sh=.003         ! magnitude of momentum flux divided by density  (SH limit )
++real        :: Bt_sh=.000         ! magnitude of momentum flux divided by density  (SH limit )
+ 
+ real        :: Bt_eq=.000         ! magnitude of momentum flux divided by density  (equator) 
+ 
+-real        :: Bt_eq_width=4.0    ! scaling for width of equtorial momentum flux  (equator) 
++real        :: Bt_eq_width=45.0    ! scaling for width of equtorial momentum flux  (equator) 
+ 
+ real        :: phi0n = 30., phi0s = -30., dphin = 5., dphis = -5.
+ 
++real       :: cswidth = 40.0      ! half-width for the wide c spectrum [ m/s ]
++                                  ! previous values: 50.0, 25.0
++
+ logical     :: calculate_ked=.false. 
+                                   ! calculate ked diagnostic ?
+ logical     :: dump_flux=.false. 
+@@ -143,7 +146,7 @@ namelist / cg_drag_nml /         &
+                           i_coords_gl, j_coords_gl,   &
+                           lat_coords_gl, lon_coords_gl, &
+                           phi0n,phi0s,dphin,dphis,      &
+-                          dump_flux, do_conserve_energy
++                          dump_flux, do_conserve_energy, cswidth
+ 
+ !--------------------------------------------------------------------
+ !-------- public data  -----
+@@ -195,9 +198,12 @@ real       :: Bw = 0.4  ! amplitude for the wide spectrum [ m^2/s^2 ]
+                         ! ~ u'w'
+ real       :: Bn = 0.0  ! amplitude for the narrow spectrum [ m^2/s^2 ] 
+                         ! ~ u'w';  previous values: 5.4
+-real       :: cw = 40.0 ! half-width for the wide c spectrum [ m/s ]
++!!!  real       :: cw = 40.0 ! half-width for the wide c spectrum [ m/s ]
++real       ::  cw
++
+                         ! previous values: 50.0, 25.0 
+ real       :: cn =  2.0 ! half-width for the narrow c spectrum  [ m/s ]
++
+ integer    :: klevel_of_source
+                         ! k index of the gravity wave source level at
+                         ! the equator in a standard atmosphere
+@@ -243,6 +249,9 @@ character(len=7) :: mod_name = 'cg_drag'
+ 
+ logical          :: module_is_initialized=.false.
+ 
++
++logical  :: mcpu0
++
+ !-------------------------------------------------------------------
+ !-------------------------------------------------------------------
+ 
+@@ -261,6 +270,7 @@ logical          :: module_is_initialized=.false.
+ 
+ subroutine cg_drag_init (domain, lonb, latb, pref, Time, axes)
+ 
++
+ !-------------------------------------------------------------------
+ !   cg_drag_init is the constructor for cg_drag_mod.
+ !-------------------------------------------------------------------
+@@ -351,6 +361,10 @@ type(time_type),         intent(in)      :: Time
+       allocate(  source_amp(idf,jdf)  )
+ !      allocate(  lat(idf,jdf)  )
+ 
++mcpu0 = (mpp_pe() == mpp_root_pe())
++
++cw= cswidth
++
+ !--------------------------------------------------------------------
+ !    define the k level which will serve as source level for the grav-
+ !    ity waves. it is that model level just below the pressure specif-
+@@ -366,11 +380,23 @@ type(time_type),         intent(in)      :: Time
+       do j=1,jdf
+         do i=1,idf
+           lat(i,j)=  0.5*( latb(i,j+1)+latb(i,j) )
++
++        source_level(i,j)= klevel_of_source
++
++        source_amp(i,j)= Bt_0 + Bt_eq *(  1.0 - ( tanh( lat(i,j)/Bt_eq_width ) )**2 )
++
++#ifdef SKIP
++
+           source_level(i,j) = (kmax + 1) - ((kmax + 1 -    &
+                               klevel_of_source)*cos(lat(i,j)) + 0.5)
+           source_amp(i,j) = Bt_0 +                         &
+                       Bt_nh*0.5*(1.+tanh((lat(i,j)/pif-phi0n)/dphin)) + &
+                       Bt_sh*0.5*(1.+tanh((lat(i,j)/pif-phi0s)/dphis))
++
++!      if( abs( lat(i,j)/pif) < Bt_eq_width )   source_amp(i,j)= Bt_eq * cos( lat(i,j) )
++
++#endif SKIP 
++
+         end do
+       end do
+       source_level = MIN (source_level, kmax-1)
+@@ -478,12 +504,15 @@ type(time_type),         intent(in)      :: Time
+ !--------------------------------------------------------------------
+ !    if present, read the restart data file.
+ !---------------------------------------------------------------------
++#ifdef SKIP
+ 
++#else
+       cg_domain => domain
+       vers = 3 ! NetCDF version
+       call read_nc_restart_file
+ 
+       old_time_step = cgdrag_alarm 
++#endif SKIP 
+ !---------------------------------------------------------------------
+ !    mark the module as initialized.
+ !---------------------------------------------------------------------
+@@ -851,13 +880,14 @@ subroutine cg_drag_end
+ !--------------------------------------------------------------------
+ !    local variables
+ 
++#ifdef SKIP
+ !For version 3 and after, use NetCDF restarts.
+       if (mpp_pe() == mpp_root_pe() ) &
+             call error_mesg ('cg_drag_mod', 'write_restart_nc: &
+               &Writing netCDF formatted restart file as &
+                 &requested. ', NOTE)
+       call cg_drag_restart
+-
++#endif SKIP 
+ 
+ #ifdef COL_DIAG
+       if (column_diagnostics_desired) then
