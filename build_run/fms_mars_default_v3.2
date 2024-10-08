@@ -190,8 +190,19 @@ $name
 "dust_source",  "dst_mass_mom_sink",  "dst_mass_sink",  "atmos_average","all",.true.,"none", 2,
 "dust_source",  "dst_mass_mom_col",  "dst_mass_mom_col","atmos_average","all",.true.,"none", 2,
 "sedim",        "dst_mass_mom_dep",   "dst_mass_dep",   "atmos_average","all",.true.,"none", 2,
+"sedim",        "dst_num_mom_dep",    "dst_num_dep",    "atmos_average","all",.true.,"none", 2,
 "mars_physics", "delz",         "delz",         "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "delp",         "delp",         "atmos_average", "all", .true.,      "none", 2,
+"radiation",    "taucloud_VIS", "taucloud_VIS", "atmos_average", "all", .true.,      "none", 2,
+"radiation",    "cldref",       "cldref",       "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "vap_mass_mom", "vap_mass_mom", "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "cor_mass_mom", "cor_mass_mom", "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ice_mass_mom", "ice_mass_mom", "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ice_num_mom",  "ice_num_mom",  "atmos_average", "all", .true.,      "none", 2,
+"mars_physics", "vap_mass_subl","vap_mass_subl","atmos_average", "all", .true.,      "none", 2,
+"mars_surface", "frost_mom",    "frost_mom",    "atmos_average", "all", .true.,      "none", 2,
+"sedim",        "ice_mass_mom_dep",   "ice_mass_dep",   "atmos_average","all",.true.,"none", 2,
+"sedim",        "ice_num_mom_dep",    "ice_num_dep",    "atmos_average","all",.true.,"none", 2,
 #*********************************************************************************************
 #                               -------  atmos_daily  ----------
 #*********************************************************************************************
@@ -200,8 +211,8 @@ $name
 "radiation",    "areo",         "areo",         "atmos_daily",   "all", .false.,     "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_daily",   "all", .false.,     "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_daily",   "all", .false.,     "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_daily",   "all", .false.,      "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_daily",   "all", .false.,      "none", 2,
+#"mars_physics", "delz",         "delz",         "atmos_daily",   "all", .false.,      "none", 2,
+#"dynamics",     "delp",         "delp",         "atmos_daily",   "all", .false.,      "none", 2,
 #*********************************************************************************************
 #                               -------  atmos_diurn ----------
 #*********************************************************************************************
@@ -211,8 +222,8 @@ $name
 "dynamics",     "ps",           "ps",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 "mars_surface"  "ts",           "ts",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 #"dynamics",     "temp",         "temp",         "atmos_diurn",   "all", "diurnal24",  "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_diurn",   "all", "diurnal24", "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_diurn",   "all", "diurnal24", "none", 2,
+#"mars_physics", "delz",         "delz",         "atmos_diurn",   "all", "diurnal24", "none", 2,
+#"dynamics",     "delp",         "delp",         "atmos_diurn",   "all", "diurnal24", "none", 2,
 #*********************************************************************************************
 #                               -------  atmos_davg  ----------
 #*********************************************************************************************
@@ -221,8 +232,8 @@ $name
 "radiation",    "areo",         "areo",         "atmos_davg",    "all", .true.,      "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_davg",    "all", .true.,      "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_davg",    "all", .true.,      "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_davg",    "all", .true.,      "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_davg",    "all", .true.,      "none", 2,
+#"mars_physics", "delz",         "delz",         "atmos_davg",    "all", .true.,      "none", 2,
+#"dynamics",     "delp",         "delp",         "atmos_davg",    "all", .true.,      "none", 2,
 
 EOF
 
