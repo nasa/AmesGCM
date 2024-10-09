@@ -6,6 +6,7 @@
 
 
 # Set up defaults 
+#alias diagnos "/u/mkahre/MCMC/analysis/working/variable_diagnostics.py"
 
 set histDir = ( `pwd` )
 
@@ -22,8 +23,12 @@ set schmidt = 0
 set stretch = 1.
 set tlon = 0.
 set tlat = -90.
+set lonb = 0.
+set lone = 360.
+set latb = -90.
+set late = 90.
 
-set argv = (`getopt o:h:i:n:d:v:c:p:s:q:w:e:r: $*`)
+set argv = (`getopt o:h:i:n:d:v:c:p:s:q:w:e:r:t:y:u:j: $*`)
 
 while ("$argv[1]" != "--")
   switch ($argv[1])
@@ -53,6 +58,14 @@ while ("$argv[1]" != "--")
       set tlon = $argv[2]; shift argv; breaksw
     case -r:
       set tlat = $argv[2]; shift argv; breaksw
+    case -t:
+      set lonb = $argv[2]; shift argv; breaksw
+    case -y:
+      set lone = $argv[2]; shift argv; breaksw
+    case -u:
+      set latb = $argv[2]; shift argv; breaksw
+    case -j:
+      set late = $argv[2]; shift argv; breaksw
   endsw
   shift argv
 end
@@ -61,6 +74,8 @@ shift argv
 if ($schmidt > 0) then
   echo 'schmidt transfer: stretch = ' $stretch
   echo 'tlon tlat = ' $tlon ' ' $tlat
+  echo 'lonb lone = ' $lonb ' ' $lone
+  echo 'latb late = ' $latb ' ' $late
 endif
 set workdir = $histDir/goof
 if (! -d $workdir) then
@@ -94,7 +109,9 @@ if ( $date != 0 ) then
   set HistFiles =  ( $date.nc.* )
 endif 
 
-set regridpath = /u/$USER/FRE-NCtools/bin                  #may require absolute path
+
+#SLES12
+set regridpath = /u/$USER/FRE-NCtools/bin 
 set fregrid = $regridpath/fregrid
 set fregrid_parallel = $regridpath/fregrid_parallel
 set HGRID = $regridpath/make_hgrid
@@ -105,12 +122,14 @@ module purge
 
 module load comp-intel
 module load mpi-hpe/mpt
+module load python3
 #SLES12
 module load hdf4/4.2.12
-module load hdf5/1.8.18_mpt
-module load netcdf/4.4.1.1_mpt
+module load hdf5/1.8.18_serial
+module load netcdf/4.4.1.1_serial 
 module load pkgsrc
 module load nco/4.6.7
+
 
 limit stacksize unlimited
 
@@ -218,6 +237,7 @@ set icube = ( `echo $RES | cut -c 2- ` )
 
  @ nlon2 = 2 * $icube
 
+#echo ${nlon2}
 cd $workdir
 
 if ( $icube > 99 ) then
@@ -226,16 +246,23 @@ endif
 
 
 if ( $schmidt > 0 ) then
-   @ NLON = $NLON * $stretch
-   @ NLAT = $NLAT * $stretch
    echo 'nlon nlat = ' $NLON $NLAT
    $HGRID  --grid_type gnomonic_ed --nlon $nlon2 --do_schmidt --stretch_factor $stretch  --target_lon $tlon  --target_lat $tlat
 else
+if ( $schmidt < 0 ) then
+   echo 'doing conformal cubic grid'
+   $HGRID  --grid_type conformal_cubic_grid --nlon $nlon2 --nratio 2
+else
    $HGRID  --grid_type gnomonic_ed --nlon $nlon2   
 endif
+endif
 
+#   Either copy  or create a mosaic file 
 
 $MOSAIC --num_tiles 6 --dir ./  --mosaic_name cube_mosaic
+
+#    Otherwise copy  necessary mosaic and horizontal_grid.tile? files 
+#               (using appropriate resolution) 
 
 set input_mosaic = cube_mosaic.nc
 
@@ -303,20 +330,24 @@ foreach File ( $diagFiles )
     if ( $npe > 1 ) then
          mpiexec -np $npe $fregrid_parallel  --input_mosaic $input_mosaic --input_file $basename --interp_method $interp_meth \
                                  --nlon $NLON --nlat $NLAT --scalar_field $variables  \
+                                 --lonBegin $lonb --lonEnd $lone --latBegin $latb --latEnd $late  \
                                  --output_file  $data_out
     else
          $fregrid  --input_mosaic $input_mosaic --input_file $basename --interp_method $interp_meth \
                                  --nlon $NLON --nlat $NLAT --scalar_field $variables  \
+                                 --lonBegin $lonb --lonEnd $lone --latBegin $latb --latEnd $late  \
                                  --output_file  $data_out
     endif
   else
     if ( $npe > 1 ) then 
          mpiexec -np $npe $fregrid_parallel  --input_mosaic $input_mosaic --input_file $basename --interp_method $interp_meth \
                                  --remap_file fregrid_remap_file --nlon $NLON --nlat $NLAT --scalar_field $variables  \
+                                 --lonBegin $lonb --lonEnd $lone --latBegin $latb --latEnd $late  \
                                  --output_file  $data_out
     else
          $fregrid  --input_mosaic $input_mosaic --input_file $basename --interp_method $interp_meth \
                                  --remap_file fregrid_remap_file --nlon $NLON --nlat $NLAT --scalar_field $variables  \
+                                 --lonBegin $lonb --lonEnd $lone --latBegin $latb --latEnd $late  \
                                  --output_file  $data_out
     endif
   endif
@@ -352,6 +383,9 @@ rm -f *.grid_spec.tile?.nc
 
 rm -rf $workdir
 
+#echo $histDir, $DATE,$data_out
+#echo 'Printing out diagnostics'
+#diagnos -f $DATE.atmos_average.nc $DATE.atmos_diurn.nc $DATE.atmos_daily.nc $DATE.fixed.nc -dir $histDir
 
 exit 0
 
