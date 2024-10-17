@@ -10,7 +10,7 @@ git checkout -b mars_branch && git apply --reject --whitespace=fix ../AmesGCM/pa
 cd ../atmos_drivers && git checkout tags/2021.02 -b mars_branch && git apply --reject --whitespace=fix ../AmesGCM/patches/srcatmos_drivers.patch
 cd ../FMScoupler && git checkout tags/2021.02 -b mars_branch
 cd ../MOM6 && git reset --hard 2e39f174b
-cd ../atmos_phys && git checkout tags/2021.02 -b mars_branch && git apply --reject --whitespace=fix ../AmesGCM/patches/srcatmos_drivers.patch
+cd ../atmos_phys && git checkout tags/2021.02 -b mars_branch && git apply --reject --whitespace=fix ../AmesGCM/patches/srcatmos_phys.patch
 cd ../land_lad2 && git checkout tags/land_lad2_2021.02 -b mars_branch
 cd ../ocean_shared && git reset --hard e113821
 cd ../AmesGCM
