@@ -1,5 +1,5 @@
 diff --git a/atmos_param/cg_drag/cg_drag.F90 b/atmos_param/cg_drag/cg_drag.F90
-index fa55527..a7bf9d7 100644
+index fa55527..3dcbe85 100644
 --- a/atmos_param/cg_drag/cg_drag.F90
 +++ b/atmos_param/cg_drag/cg_drag.F90
 @@ -75,7 +75,7 @@ integer     :: cg_drag_offset=0   ! offset of calculation from 00Z [ s ]
@@ -7,16 +7,22 @@ index fa55527..a7bf9d7 100644
                                    ! every time step
  
 -real        :: source_level_pressure= 315.e+02    
-+real        :: source_level_pressure= 1.00    
++real        :: source_level_pressure= 150.00
                                    ! highest model level with  pressure 
                                    ! greater than this value (or sigma
                                    ! greater than this value normalized
-@@ -89,22 +89,25 @@ real        :: cmax=99.6          ! maximum phase speed in gravity wave
+@@ -84,27 +84,30 @@ real        :: source_level_pressure= 315.e+02
+                                   ! [ Pa ]
+ integer     :: nk=1               ! number of wavelengths contained in 
+                                   ! the gravity wave spectrum
+-real        :: cmax=99.6          ! maximum phase speed in gravity wave
++real        :: cmax=72.0          ! maximum phase speed in gravity wave
+                                   ! spectrum [ m/s ]
  real        :: dc=1.2             ! gravity wave spectral resolution 
                                    ! [ m/s ]
                                    ! previous values: 0.6
 -real        :: Bt_0=.003          ! sum across the wave spectrum of 
-+real        :: Bt_0=.000          ! sum across the wave spectrum of 
++real        :: Bt_0=.000          ! sum across the wave spectrum of
                                    ! the magnitude of momentum flux, 
                                    ! divided by density [ m^2/s^2 ]
              
@@ -28,14 +34,15 @@ index fa55527..a7bf9d7 100644
 -real        :: Bt_sh=.003         ! magnitude of momentum flux divided by density  (SH limit )
 +real        :: Bt_sh=.000         ! magnitude of momentum flux divided by density  (SH limit )
  
- real        :: Bt_eq=.000         ! magnitude of momentum flux divided by density  (equator) 
+-real        :: Bt_eq=.000         ! magnitude of momentum flux divided by density  (equator) 
++real        :: Bt_eq=.08         ! magnitude of momentum flux divided by density  (equator) 
  
 -real        :: Bt_eq_width=4.0    ! scaling for width of equtorial momentum flux  (equator) 
-+real        :: Bt_eq_width=45.0    ! scaling for width of equtorial momentum flux  (equator) 
++real        :: Bt_eq_width=45.0    ! scaling for width of equtorial momentum flux  (equator)
  
  real        :: phi0n = 30., phi0s = -30., dphin = 5., dphis = -5.
  
-+real       :: cswidth = 40.0      ! half-width for the wide c spectrum [ m/s ]
++real       :: cswidth = 25.0      ! half-width for the wide c spectrum [ m/s ]
 +                                  ! previous values: 50.0, 25.0
 +
  logical     :: calculate_ked=.false. 
@@ -112,7 +119,7 @@ index fa55527..a7bf9d7 100644
 +
 +!      if( abs( lat(i,j)/pif) < Bt_eq_width )   source_amp(i,j)= Bt_eq * cos( lat(i,j) )
 +
-+#endif SKIP 
++#endif SKIP
 +
          end do
        end do
@@ -129,7 +136,7 @@ index fa55527..a7bf9d7 100644
        call read_nc_restart_file
  
        old_time_step = cgdrag_alarm 
-+#endif SKIP 
++#endif SKIP
  !---------------------------------------------------------------------
  !    mark the module as initialized.
  !---------------------------------------------------------------------
@@ -145,7 +152,7 @@ index fa55527..a7bf9d7 100644
                  &requested. ', NOTE)
        call cg_drag_restart
 -
-+#endif SKIP 
++#endif SKIP
  
  #ifdef COL_DIAG
        if (column_diagnostics_desired) then
