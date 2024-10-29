@@ -394,6 +394,8 @@ endif
 
 if (ames_15band .and. use_boxinterp12) call error_mesg ('ames_radsetup','ames_15band is not compatible with boxinterp12', FATAL)
 if (ames_15band .neqv. do_15band) call error_mesg ('ames_radsetup','ames_15band flag does not match the do_15band setting in aerosol_util_mod', FATAL)
+if (radactive_co2cloud .and. (.not. ames_15band)) call error_mesg ('ames_radsetup','radactive_co2cloud must be run with ames_15band', FATAL)
+if (radactive_cloud_bulk .and. (.not. ames_15band)) call error_mesg ('ames_radsetup','radactive_cloud_bulk must be run with ames_15band', FATAL)
 
 call set_bands(mcpu0)
 call setspv(mcpu0)
@@ -5427,8 +5429,6 @@ if (ames_15band .OR. use_extended_cor_ks) then
     open(61,file=trim(rtdata_path)//'waterCoated_ir_JD_15bands.dat')
     open(62,file=trim(rtdata_path)//'Dust_vis_wolff2010_JD_15bands.dat')
     open(63,file=trim(rtdata_path)//'Dust_ir_wolff2010_JD_15bands.dat')
-    open(64,file=trim(rtdata_path)//'co2Coated_vis_MK_15bands29radii_1nratio.dat')
-    open(65,file=trim(rtdata_path)//'co2Coated_ir_MK_15bands29radii_1nratio.dat')
 
     do j = 1, nratio
         do i = 1, nbin_rt
@@ -5455,25 +5455,10 @@ if (ames_15band .OR. use_extended_cor_ks) then
             qscati_dst(i,l) = qscati_dst(i,l) * factor
         enddo
     enddo
-
-    !read in co2 cloud files
-    do j = 1, nratioblk
-        do i = 1, nbin_rtco2
-            read(64,'(7(e12.7,x))') (qextv_co2cld(j,i,l), l=1,nlonv)
-            read(64,'(7(e12.7,x))') (qscatv_co2cld(j,i,l), l=1,nlonv)
-            read(64,'(7(e12.7,x))') (gv_co2cld(j,i,l), l=1,nlonv)
-            read(65,'(8(e12.7,x))') (qexti_co2cld(j,i,l), l=1,nloni)
-            read(65,'(8(e12.7,x))') (qscati_co2cld(j,i,l), l=1,nloni)
-            read(65,'(8(e12.7,x))') (gi_co2cld(j,i,l), l=1,nloni)
-        enddo
-    enddo
-
     close(60)
     close(61)
     close(62)
     close(63)
-    close(64)
-    close(65)
 
 else
     open(60,file=trim(rtdata_path)//'waterCoated_vis_JD_12bands.dat')
@@ -5541,6 +5526,25 @@ if (radactive_cloud_bulk) then
     close(61)
     close(62)
     close(63)
+endif
+
+if (radactive_co2cloud) then
+    open(64,file=trim(rtdata_path)//'co2Coated_vis_MK_15bands29radii_1nratio.dat')
+    open(65,file=trim(rtdata_path)//'co2Coated_ir_MK_15bands29radii_1nratio.dat')
+    
+    !read in co2 cloud files
+    do j = 1, nratioblk
+        do i = 1, nbin_rtco2
+            read(64,'(7(e12.7,x))') (qextv_co2cld(j,i,l), l=1,nlonv)
+            read(64,'(7(e12.7,x))') (qscatv_co2cld(j,i,l), l=1,nlonv)
+            read(64,'(7(e12.7,x))') (gv_co2cld(j,i,l), l=1,nlonv)
+            read(65,'(8(e12.7,x))') (qexti_co2cld(j,i,l), l=1,nloni)
+            read(65,'(8(e12.7,x))') (qscati_co2cld(j,i,l), l=1,nloni)
+            read(65,'(8(e12.7,x))') (gi_co2cld(j,i,l), l=1,nloni)
+        enddo
+    enddo
+    close(64)
+    close(65)
 endif
 
 if (do_cia) then

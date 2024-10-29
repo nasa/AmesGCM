@@ -16,7 +16,7 @@
 #**************************************************************************************************
 # ====================================== Execution Variables  =====================================
 #**************************************************************************************************
-set name        = fms_earlymars_500mb_v3.12
+set name        = fms_earlymars_500mb_v3.2
 set scriptname  = $cwd/$name
 set classdir    = am4_earlymars_runs
 set workdir     = /nobackup/$USER/FMS_MARS_runs/$classdir/$name     # Where model is run, output stored
@@ -178,7 +178,7 @@ $name
 "dynamics",     "vkd",          "vkd",          "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "tkd",          "tkd",          "atmos_average", "all", .true.,      "none", 2,
 "mars_physics", "stress",       "stress",       "atmos_average", "all", .true.,      "none", 2,
-"mars_surface", "snow",         "co2ice_sfc",         "atmos_average", "all", .true.,      "none", 2,
+"mars_surface", "snow",         "co2ice_sfc",   "atmos_average", "all", .true.,      "none", 2,
 "mars_physics", "precip",       "precip",       "atmos_average", "all", .true.,      "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "t05",          "t05",          "atmos_average", "all", .true.,      "none", 2,
@@ -188,7 +188,9 @@ $name
 "dynamics",     "dst_num_mom",  "dst_num_mom",  "atmos_average", "all", .true.,      "none", 2,
 "dust_source",  "dst_mass_mom_source","dst_mass_source","atmos_average","all",.true.,"none", 2,
 "dust_source",  "dst_mass_mom_sink",  "dst_mass_sink",  "atmos_average","all",.true.,"none", 2,
-"dust_source",  "dst_mass_mom_col",   "dst_mass_mom_col",   "atmos_average","all",.true.,"none", 2,
+"dust_source",  "dst_mass_mom_col",  "dst_mass_mom_col","atmos_average","all",.true.,"none", 2,
+"sedim",        "dst_mass_mom_dep",   "dst_mass_dep",   "atmos_average","all",.true.,"none", 2,
+"sedim",        "dst_num_mom_dep",    "dst_num_dep",    "atmos_average","all",.true.,"none", 2,
 "mars_physics", "delz",         "delz",         "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "delp",         "delp",         "atmos_average", "all", .true.,      "none", 2,
 #*********************************************************************************************
@@ -199,8 +201,8 @@ $name
 "radiation",    "areo",         "areo",         "atmos_daily",   "all", .false.,     "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_daily",   "all", .false.,     "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_daily",   "all", .false.,     "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_daily",   "all", .false.,      "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_daily",   "all", .false.,      "none", 2,
+#"mars_physics", "delz",         "delz",         "atmos_daily",   "all", .false.,      "none", 2,
+#"dynamics",     "delp",         "delp",         "atmos_daily",   "all", .false.,      "none", 2,
 #*********************************************************************************************
 #                               -------  atmos_diurn ----------
 #*********************************************************************************************
@@ -210,8 +212,8 @@ $name
 "dynamics",     "ps",           "ps",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 "mars_surface"  "ts",           "ts",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 #"dynamics",     "temp",         "temp",         "atmos_diurn",   "all", "diurnal24",  "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_diurn",   "all", "diurnal24", "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_diurn",   "all", "diurnal24", "none", 2,
+#"mars_physics", "delz",         "delz",         "atmos_diurn",   "all", "diurnal24", "none", 2,
+#"dynamics",     "delp",         "delp",         "atmos_diurn",   "all", "diurnal24", "none", 2,
 #*********************************************************************************************
 #                               -------  atmos_davg  ----------
 #*********************************************************************************************
@@ -220,8 +222,8 @@ $name
 "radiation",    "areo",         "areo",         "atmos_davg",    "all", .true.,      "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_davg",    "all", .true.,      "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_davg",    "all", .true.,      "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_davg",    "all", .true.,      "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_davg",    "all", .true.,      "none", 2,
+#"mars_physics", "delz",         "delz",         "atmos_davg",    "all", .true.,      "none", 2,
+#"dynamics",     "delp",         "delp",         "atmos_davg",    "all", .true.,      "none", 2,
 
 EOF
 
@@ -379,11 +381,11 @@ cat > input.nml.unexpanded <<\EOF
     GW_drag_TOG               = 0,  ! Toggle for gravity wave drag
                                     ! 0 for none
                                     ! 1 for Palmer orographic gravity waves
-                                    ! 3 not supported
-    do_conserve_energy        = T,  ! adjust temperature according to wind drag
-    rayleighModelTop_flag     = T,  ! Apply Rayleigh damping at the top of model
-    rayleighModelTop_pres_cutoff = 125.,   ! bottom of sponge layer, below which Rayleigh damping is zero (Pa)
-    rayleighModelTop_pres_inflex = 13.,    ! Raleigh damping pressure level (Pa)
+                                    ! 2 for Alexander and Dunkerton non-orographic waves
+    do_conserve_energy        = T,  ! flag: adjust temperature according to wind drag
+    rayleighModelTop_flag     = T,  ! flag: Rayleigh damping at the top of model
+    rayleighModelTop_pres_cutoff = 125.,  ! bottom of sponge layer. Below this Rayleigh damping is zero (Pa)
+    rayleighModelTop_pres_inflex = 13.,   ! Raleigh damping inflection pressure level (Pa)
 
 /
 
@@ -409,8 +411,8 @@ cat > input.nml.unexpanded <<\EOF
 /
 
  &dust_update_nml
-    Background=T,                  ! Background dust mode
-    interact = F,                  ! Interactive Dust Mode
+    Background=T,                   ! Background dust mode
+    interact = F,                   ! Interactive Dust Mode
 /
 
 !**************************************************************************************************
@@ -509,6 +511,8 @@ cp $datadir/QabsFCorrect.dat .
 
 cp $datadir/DustQ_Tbright_MK.dat                DustQ_Tbright_MK.dat
 cp $datadir/waterCoatedQ_Tbright_MK.dat         waterCoatedQ_Tbright_MK.dat
+
+cp $datadir/palmer_drag_input_c24_c48_c96.nc .
 
 #------ Copy hi-res topography, TI, albedo, and surface emissivity:
 cp $datadir/mars_topo_mola16.nc                 mars_topo.nc

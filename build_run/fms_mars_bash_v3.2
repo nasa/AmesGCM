@@ -26,6 +26,7 @@ model_executable="$PWD/exec.$platform.mars3.1/FMS_MARS.x"           # Path to mo
 homedir="$PWD"
 
 export NCX=24        # number of horizontal grid cells per cube face column or row
+export PREF=7.05e2   # reference surface pressure (Pa)
 export DTA=924       # atmospheric time step
 export NKS=1         # number of vertical remapping per time step
 export NNS=4         # number of advective steps per k
@@ -131,9 +132,10 @@ $name
 # Define the output files
 "grid_spec",     -1, "hours",  1, "days", "time",
 "fixed",         -1, "days",   1, "days", "time",
-"atmos_daily",    6, "hours",  1, "days", "time",
+"atmos_daily",    2, "hours",  1, "days", "time",
 "atmos_average",  5, "days",   1, "days", "time",
 "atmos_diurn",    5, "days",   1, "days", "time",
+"atmos_davg",     1, "days",   1, "days", "time",
 #####################
 #------ Format of each column in the diag table:
 # module_name, field_name, output_name, file_name, time_sampling, time_method, spatial_ops, pack
@@ -170,7 +172,7 @@ $name
 "dynamics",     "vkd",          "vkd",          "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "tkd",          "tkd",          "atmos_average", "all", .true.,      "none", 2,
 "mars_physics", "stress",       "stress",       "atmos_average", "all", .true.,      "none", 2,
-"mars_surface", "snow",         "snow",         "atmos_average", "all", .true.,      "none", 2,
+"mars_surface", "snow",         "co2ice_sfc",   "atmos_average", "all", .true.,      "none", 2,
 "mars_physics", "precip",       "precip",       "atmos_average", "all", .true.,      "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "t05",          "t05",          "atmos_average", "all", .true.,      "none", 2,
@@ -192,6 +194,14 @@ $name
 "radiation",    "areo",         "areo",         "atmos_diurn",   "all", "diurnal24", "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 "mars_surface"  "ts",           "ts",           "atmos_diurn",   "all", "diurnal24", "none", 2,
+#*********************************************************************************************
+#                               -------  atmos_davg  ----------
+#*********************************************************************************************
+"dynamics",     "bk",           "bk",           "atmos_davg",    "all", .true.,      "none", 2,
+"dynamics",     "pk",           "ak",           "atmos_davg",    "all", .true.,      "none", 2,
+"radiation",    "areo",         "areo",         "atmos_davg",    "all", .true.,      "none", 2,
+"dynamics",     "ps",           "ps",           "atmos_davg",    "all", .true.,      "none", 2,
+"mars_surface", "ts",           "ts",           "atmos_davg",    "all", .true.,      "none", 2,
 
 EOF
 
@@ -219,32 +229,32 @@ cat <<EOF > field_table
           "radtype",      "radval=1",
           "optics",       "qext=0.98",
           "profile_type", "fixed",         "surface_value=0.0" /
-"TRACER", "atmos_mod",    "dst_mass_micro"
+"TRACER", "atmos_mod",    "dst_mass_mom"
           "longname",     "dust_mass"
           "units",        "none"
           "type",         "microphys"
           "profile_type", "fixed",         "surface_value=0.0" /
-"TRACER", "atmos_mod",    "dst_num_micro"
+"TRACER", "atmos_mod",    "dst_num_mom"
           "longname",     "dust_number"
           "units",        "none"
           "type",         "microphys"
           "profile_type", "fixed",         "surface_value=0.0" /
-"TRACER", "atmos_mod",    "ice_mass_micro"
+"TRACER", "atmos_mod",    "ice_mass_mom"
           "longname",     "ice_mass"
           "units",        "none"
           "type",         "microphys"
           "profile_type", "fixed",         "surface_value=0.0" /
-"TRACER", "atmos_mod",    "ice_num_micro"
+"TRACER", "atmos_mod",    "ice_num_mom"
           "longname",     "ice_number"
           "units",        "none"
           "type",         "microphys"
           "profile_type", "fixed",         "surface_value=0.0" /
-"TRACER", "atmos_mod",    "cor_mass_micro"
+"TRACER", "atmos_mod",    "cor_mass_mom"
           "longname",     "dust_core_mass"
           "units",        "none"
           "type",         "microphys"
           "profile_type", "fixed",         "surface_value=0.0" /
-"TRACER", "atmos_mod",    "vap_mass_micro"
+"TRACER", "atmos_mod",    "vap_mass_mom"
           "longname",     "vapor_mass"
           "units",        "none"
           "type",         "microphys"
@@ -268,9 +278,9 @@ cat <<'EOF' > input.nml.unexpanded
 
  &fv_core_nml
     layout          = $TILE_LAYOUT  ! Layout of processor: total cpu core = 6*layout1*layout2
-    reference_sfc_pres = 7.05e2,    ! Reference sfc pressure for nominal vertical grid in output [Pa]
-    p_ref           = 7.05e2,       ! Reference sfc pressure [Pa] used to define vertical grid aks
-    dry_mass        = 7.05e2,       ! Initial co2 mass [Pa]
+    reference_sfc_pres = $PREF,    ! Reference sfc pressure for nominal vertical grid in output [Pa]
+    p_ref           = $PREF,       ! Reference sfc pressure [Pa] used to define vertical grid aks
+    dry_mass        = $PREF,       ! Initial co2 mass [Pa]
     npx             = $NPX,         ! Number of cell boundaries per tile, x-direction. Resolution is ~360/4*22
     npy             = $NPX,         ! Number of cell boundaries per tile, y-direction. Resolution is ~360/4*22
     npz             = $NPZ,         ! Number of vertical layers to use; tabulates ak, bk values specified
@@ -310,6 +320,10 @@ cat <<'EOF' > input.nml.unexpanded
                                     !   Dynamical timestep then = dt_atmos/(nsplit * ksplit)
 /
 
+ &surface_data_nml
+      do_co2_condensation     = T,  ! Flag: CO2 condensation at sfc. Maintains sfc T at or above Tcrit
+/
+
 !**************************************************************************************************
 ! ======================================== Physics Namelists ======================================
 !**************************************************************************************************
@@ -322,10 +336,10 @@ cat <<'EOF' > input.nml.unexpanded
                                     !   If do_co2_condesnation_cycle = F, CO2 cap formation still
                                     !   allowed, it influences T and albedos, but mass source/sink
                                     !   does not affect the pressure cycle.
-/
-
- &surface_data_nml
-      do_co2_condensation     = T,  ! Flag: CO2 condensation at sfc. Maintains sfc T at or above Tcrit
+    GW_drag_TOG               = 0,  ! Toggle for gravity wave drag
+                                    ! 0 for none
+                                    ! 1 for Palmer orographic gravity waves
+                                    ! 2 for Alexander and Dunkerton non-orographic waves
 /
 
 !**************************************************************************************************
@@ -333,7 +347,6 @@ cat <<'EOF' > input.nml.unexpanded
 !**************************************************************************************************
 
  &aerosol_util_nml
-
 /
 
  &aerosol_nml
@@ -343,6 +356,19 @@ cat <<'EOF' > input.nml.unexpanded
                                     !   1 = Conrath with scaled ztop
 /
 
+ &dust_update_nml
+    Background=T,                   ! Background dust mode
+    interact = F,                   ! Interactive Dust Mode
+/
+
+!**************************************************************************************************
+! ==================================== Gravity Wave Drag Namelists ================================
+!**************************************************************************************************
+
+ &palmer_drag_nml
+    grid_res= $NCX,                 ! Closest grid resolution for the topography standard deviation
+/
+
 !**************************************************************************************************
 ! =================================== Radiative Transfer Namelists ================================
 !**************************************************************************************************
@@ -350,7 +376,7 @@ cat <<'EOF' > input.nml.unexpanded
  &ames_rtmod_nml
        radactive_dust_TOG     = 3,  ! Toggle for Rad-Active dust
                                     !   0 for clear
-                                    !   1 not supported
+                                    !   1 transported moment dust (defined by dust_update_nml flags)
                                     !   2 not supported
                                     !   3 prescribed fixed (defined by aerosol_nml flags)
 /
@@ -370,7 +396,7 @@ cat <<'EOF' > input.nml.unexpanded
 /
 
  &test_case_nml
-        test_case   = 10            !  Topography type. 11= Mars topo; 10= flat topo
+        test_case   = 11            !  Topography type. 11= Mars topo; 10= flat topo
 /
 
 EOF
@@ -413,8 +439,12 @@ cp "$datadir/waterCoated_ir_"* .
 cp "$datadir/Dust_vis_wolff2010_"* .
 cp "$datadir/Dust_ir_wolff2010_"* .
 
+cp "$datadir/QabsFCorrect.dat" .
+
 cp "$datadir/DustQ_Tbright_MK.dat" DustQ_Tbright_MK.dat
 cp "$datadir/waterCoatedQ_Tbright_MK.dat" waterCoatedQ_Tbright_MK.dat
+
+cp "$datadir/palmer_drag_input_c24_c48_c96.nc" .
 
 #------ Copy hi-res topography, TI, albedo, and surface emissivity:
 cp "$datadir/mars_topo_mola16.nc" mars_topo.nc
@@ -578,4 +608,3 @@ ssh -q pfe "ssh -q lou scp -q $workdir/history/*.nc.tar  $HIST_DIR/."
 ssh -q pfe "ssh -q lou scp -q $homedir/$name  $ASCII_DIR/."
 
 exit 0
-
