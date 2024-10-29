@@ -8,7 +8,7 @@
 #PBS -q long
 #PBS -j oe
 #PBS -l select=3:ncpus=28:model=bro
-#PBS -l walltime=12:00:00
+#PBS -l walltime=08:00:00
 #PBS -W group_list=s????
 #PBS -M user@email.com
 #PBS -m abe
@@ -16,9 +16,9 @@
 #**************************************************************************************************
 # ====================================== Execution Variables  =====================================
 #**************************************************************************************************
-set name        = fms_earlymars_500mb_v3.12
+set name        = fms_mars_clouds_v3.2
 set scriptname  = $cwd/$name
-set classdir    = am4_earlymars_runs
+set classdir    = am4_mars_runs
 set workdir     = /nobackup/$USER/FMS_MARS_runs/$classdir/$name     # Where model is run, output stored
 set datadir     = $cwd/../src/AmesGCM/data                  # The data dir
 echo "Datadir =" $datadir
@@ -29,10 +29,10 @@ set model_executable = $cwd/exec.$platform.mars3.2/FMS_MARS.x           # Path t
 set homedir     = $cwd
 
 set NCX         = 24        # number of horizontal grid cells per cube face column or row
-set PREF        = 5.0e4    # reference surface pressure (Pa)
+set PREF        = 7.05e2    # reference surface pressure (Pa)
 set DTA         = 231       # atmospheric time step
-set NKS         = 1         # number of vertical remapping per time step
-set NNS         = 4         # number of advective steps per k
+set NKS         = 3         # number of vertical remapping per time step
+set NNS         = 8         # number of advective steps per k
 set NPZ         = 56        # number of vertical layers
 set NPZ_RST     = 0         # resolution in restart file
 
@@ -41,7 +41,7 @@ set NPZ_RST     = 0         # resolution in restart file
 #**************************************************************************************************
 
 #------ Tells model how long to run. Default = (668 668) is 2 years, 1 year per output file
-set dayslist        = ( 668 668 )   # Number of days per execution.
+set dayslist        = ( 668 668 668 )   # Number of days per execution.
 set num_executions  = $#dayslist    # Number of executions. Each run restarts from previous run.
 
 #------ Define the run type:
@@ -56,12 +56,12 @@ set restartfile = /nobackup/$USER/FMS_MARS_runs/$classdir/$name/restart/01336.re
 #**************************************************************************************************
 
 #------ Options for editing initial condition fields:
-set RESET_DATE       = 0
-set USE_SURFACE_MAPS = 0
+set RESET_DATE      = 0
+set USE_SURFACE_MAPS = 1
 
 #------ Define a list of dust scenarios to use. Each execution will cycle to the next file, then
 #       loop back to the first:
-set dust_scenarios  = ( DustScenario_Background.nc )
+set dust_scenarios  = ( DustScenario_MY30.nc )
 
 #------ Add personalized variables to diag_table.ext and add them here:
 set APPEND_EXTERNAL_DIAGTABLE = 0
@@ -178,7 +178,7 @@ $name
 "dynamics",     "vkd",          "vkd",          "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "tkd",          "tkd",          "atmos_average", "all", .true.,      "none", 2,
 "mars_physics", "stress",       "stress",       "atmos_average", "all", .true.,      "none", 2,
-"mars_surface", "snow",         "co2ice_sfc",         "atmos_average", "all", .true.,      "none", 2,
+"mars_surface", "snow",         "co2ice_sfc",   "atmos_average", "all", .true.,      "none", 2,
 "mars_physics", "precip",       "precip",       "atmos_average", "all", .true.,      "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "t05",          "t05",          "atmos_average", "all", .true.,      "none", 2,
@@ -188,9 +188,21 @@ $name
 "dynamics",     "dst_num_mom",  "dst_num_mom",  "atmos_average", "all", .true.,      "none", 2,
 "dust_source",  "dst_mass_mom_source","dst_mass_source","atmos_average","all",.true.,"none", 2,
 "dust_source",  "dst_mass_mom_sink",  "dst_mass_sink",  "atmos_average","all",.true.,"none", 2,
-"dust_source",  "dst_mass_mom_col",   "dst_mass_mom_col",   "atmos_average","all",.true.,"none", 2,
+"dust_source",  "dst_mass_mom_col",  "dst_mass_mom_col","atmos_average","all",.true.,"none", 2,
+"sedim",        "dst_mass_mom_dep",   "dst_mass_dep",   "atmos_average","all",.true.,"none", 2,
+"sedim",        "dst_num_mom_dep",    "dst_num_dep",    "atmos_average","all",.true.,"none", 2,
 "mars_physics", "delz",         "delz",         "atmos_average", "all", .true.,      "none", 2,
 "dynamics",     "delp",         "delp",         "atmos_average", "all", .true.,      "none", 2,
+"radiation",    "taucloud_VIS", "taucloud_VIS", "atmos_average", "all", .true.,      "none", 2,
+"radiation",    "cldref",       "cldref",       "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "vap_mass_mom", "vap_mass_mom", "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "cor_mass_mom", "cor_mass_mom", "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ice_mass_mom", "ice_mass_mom", "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ice_num_mom",  "ice_num_mom",  "atmos_average", "all", .true.,      "none", 2,
+"mars_physics", "wflux_vap","vap_mass_subl","atmos_average", "all", .true.,      "none", 2,
+"mars_surface", "frost_mom",    "frost_mom",    "atmos_average", "all", .true.,      "none", 2,
+"sedim",        "vap_mass_mom_dep",   "ice_mass_dep",   "atmos_average","all",.true.,"none", 2,
+"microphys",    "vap_mass_mom_col", "vap_mass_mom_col", "atmos_average","all",.true.,"none", 2,
 #*********************************************************************************************
 #                               -------  atmos_daily  ----------
 #*********************************************************************************************
@@ -199,8 +211,6 @@ $name
 "radiation",    "areo",         "areo",         "atmos_daily",   "all", .false.,     "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_daily",   "all", .false.,     "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_daily",   "all", .false.,     "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_daily",   "all", .false.,      "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_daily",   "all", .false.,      "none", 2,
 #*********************************************************************************************
 #                               -------  atmos_diurn ----------
 #*********************************************************************************************
@@ -209,9 +219,7 @@ $name
 "radiation",    "areo",         "areo",         "atmos_diurn",   "all", "diurnal24", "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_diurn",   "all", "diurnal24", "none", 2,
 "mars_surface"  "ts",           "ts",           "atmos_diurn",   "all", "diurnal24", "none", 2,
-#"dynamics",     "temp",         "temp",         "atmos_diurn",   "all", "diurnal24",  "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_diurn",   "all", "diurnal24", "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_diurn",   "all", "diurnal24", "none", 2,
+"dynamics",     "temp",         "temp",         "atmos_diurn",   "all", "diurnal24",  "none", 2,
 #*********************************************************************************************
 #                               -------  atmos_davg  ----------
 #*********************************************************************************************
@@ -220,8 +228,6 @@ $name
 "radiation",    "areo",         "areo",         "atmos_davg",    "all", .true.,      "none", 2,
 "dynamics",     "ps",           "ps",           "atmos_davg",    "all", .true.,      "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_davg",    "all", .true.,      "none", 2,
-"mars_physics", "delz",         "delz",         "atmos_davg",    "all", .true.,      "none", 2,
-"dynamics",     "delp",         "delp",         "atmos_davg",    "all", .true.,      "none", 2,
 
 EOF
 
@@ -339,29 +345,8 @@ cat > input.nml.unexpanded <<\EOF
                                     !   Dynamical timestep then = dt_atmos/(nsplit * ksplit)
 /
 
- &orbital_data_nml
-      obliquity= 25.19,             ! Planet obliquity [deg] 
-      eccentricity= 0.0,            ! Planet eccentricity
-      solar_constant= 438.0864,     ! Solar constant at Mars [W/m2]
-/
-
  &surface_data_nml
       do_co2_condensation     = T,  ! Flag: CO2 condensation at sfc. Maintains sfc T at or above Tcrit
-      do_subsfc_ice           = F,  ! Include subsurface ice effect on thermal diffusivity
-      soil_ti= 250.0,               ! soil thermal inertia [J m-2 K-1 s-0.5], used only if an input file is not provided
-      soil_alb= 0.2,                ! surface albedo, used only if an input file is not provided
-      albedo_ice_np = 0.5,          ! Northern hemisphere CO2 ice albedo
-      albedo_ice_sp = 0.5,          ! Southern hemisphere CO2 ice albedo
-      emiss_ice_np = 0.85,          ! Northern hemisphere CO2 ice emissivity
-      emiss_ice_sp = 0.85,          ! Southern hemisphere CO2 ice emissivity 
-      soil_temp= 220.,              ! isothermal initialization soil temperature
-      use_legacy_soil         = T,  ! use legacy soil rho cp values
-      alpha = 0.0,                  ! Defines surface temperature calculation (0 = fully explicit, 0.5 = semi-implicit, 1.0 = fully implicit)
-
-/
-
- &mars_iso_nml
-      isotemp = 220.,               ! Isothermal initialization temperature [K]
 /
 
 !**************************************************************************************************
@@ -379,16 +364,8 @@ cat > input.nml.unexpanded <<\EOF
     GW_drag_TOG               = 0,  ! Toggle for gravity wave drag
                                     ! 0 for none
                                     ! 1 for Palmer orographic gravity waves
-                                    ! 3 not supported
-    do_conserve_energy        = T,  ! adjust temperature according to wind drag
-    rayleighModelTop_flag     = T,  ! Apply Rayleigh damping at the top of model
-    rayleighModelTop_pres_cutoff = 125.,   ! bottom of sponge layer, below which Rayleigh damping is zero (Pa)
-    rayleighModelTop_pres_inflex = 13.,    ! Raleigh damping pressure level (Pa)
-
-/
-
-&ames_pblmod_nml
-    htflux_recalc             = T,  ! If true, calculate heat flux at the end of newpbl with updated temperature
+                                    ! 2 for Alexander and Dunkerton non-orographic waves
+    rayleighModelTop_flag = T,
 /
 
 !**************************************************************************************************
@@ -396,23 +373,26 @@ cat > input.nml.unexpanded <<\EOF
 !**************************************************************************************************
 
  &aerosol_util_nml
-    do_15band                 = T,  ! Do 15 band aerosol optics, must match rtmod flag
-    do_moment_dust            = F,  ! Do dust moment microphysics
-
+    Reff_backgd=2.e-6,              ! Dust reference radius for background dust
+    do_moment_water = T,
 /
 
  &aerosol_nml
     do_inpt_dust_cycle        = T,  ! Flag: Read dust scenario from an input file for lifting
-    conrath_type              = 0,  ! Conrath vertical extent.
+    conrath_type              = 1,  ! Conrath vertical extent.
                                     !   0 = Conventional Conrath top
                                     !   1 = Conrath with scaled ztop
 /
 
  &dust_update_nml
-    Background=T,                  ! Background dust mode
-    interact = F,                  ! Interactive Dust Mode
+    Background=T,                   ! Background dust mode
+    interact = F,                   ! Interactive Dust Mode
 /
-
+ &microphys_nml
+     microtimestep = 30,
+     makeclouds = T,
+     mteta = 0.95,
+/
 !**************************************************************************************************
 ! ==================================== Gravity Wave Drag Namelists ================================
 !**************************************************************************************************
@@ -425,24 +405,13 @@ cat > input.nml.unexpanded <<\EOF
 ! =================================== Radiative Transfer Namelists ================================
 !**************************************************************************************************
 
- &radiation_driver_nml
-       rad_calc_intv= 462,          !radiation calculation time step [s]
-/
-
  &ames_rtmod_nml
-       radactive_dust_TOG     = 0,  ! Toggle for Rad-Active dust
+       radactive_dust_TOG     = 1,  ! Toggle for Rad-Active dust
                                     !   0 for clear
                                     !   1 transported moment dust (defined by dust_update_nml flags)
                                     !   2 not supported
                                     !   3 prescribed fixed (defined by aerosol_nml flags)
-       use_extended_cor_ks    = T,  ! Extended temperature range and CO2 line widths appropriate for higher pressures
-       ames_15band            = T,  ! Use 15 band version. If false, use 12 band
-       use_boxinterp12        = F,  ! use boxinterp for k-coef interpolation
-       do_cia                 = T,  ! Account for collision induced absorption (CIA) opacity
-         cia_co2 = 0.95,            ! molar concentration of CO2 for CIA (value between 0 and 1)
-         cia_h2 = 0.0,              ! molar concentration of H2 for CIA (value between 0 and 1)
-       do_irflux_scale        = T,  ! optional scaling to set upward ir flux equal to sigmaT4
-       scale_by_scon          = T,  ! flag to scale the solar flux by solar constant namelist variable in astronomy 
+       radactive_cloud        = T,
 /
 
 !**************************************************************************************************
@@ -460,7 +429,7 @@ cat > input.nml.unexpanded <<\EOF
 /
 
  &test_case_nml
-        test_case   = 10            !  Topography type. 11= Mars topo; 10= flat topo
+        test_case   = 11            !  Topography type. 11= Mars topo; 10= flat topo
 /
 
 \EOF
@@ -499,7 +468,6 @@ cd $workdir/INPUT
 
 #------ Copy files for radiation:
 cp $datadir/CO2H2O_* .
-cp $datadir/*100_800.dat .
 cp $datadir/waterCoated_vis_* .
 cp $datadir/waterCoated_ir_* .
 cp $datadir/Dust_vis_wolff2010_* .
@@ -509,6 +477,8 @@ cp $datadir/QabsFCorrect.dat .
 
 cp $datadir/DustQ_Tbright_MK.dat                DustQ_Tbright_MK.dat
 cp $datadir/waterCoatedQ_Tbright_MK.dat         waterCoatedQ_Tbright_MK.dat
+
+cp $datadir/palmer_drag_input_c24_c48_c96.nc .
 
 #------ Copy hi-res topography, TI, albedo, and surface emissivity:
 cp $datadir/mars_topo_mola16.nc                 mars_topo.nc
@@ -565,7 +535,7 @@ set numdust = $#dust_scenarios
 set dscen   = 1
 
 if( $numdust == 0) then
-    set dust_scenarios  = ( DustScenario_Background.nc )
+    set dust_scenarios  = ( DustScenario_MY30.nc )
     echo "No dust scenario chosen, defaulting to background"
 endif
 
