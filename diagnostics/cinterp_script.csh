@@ -110,8 +110,11 @@ if ( $date != 0 ) then
 endif 
 
 
+#SLES11
+#set regridpath = /u/mkahre/MCMC/analysis/lib/SLES11
 #SLES12
-set regridpath = /u/$USER/FRE-NCtools/bin 
+set regridpath = /u/mkahre/MCMC/analysis/lib/fregrid_150422
+#set regridpath = /u/rurata/fregrid_150422
 set fregrid = $regridpath/fregrid
 set fregrid_parallel = $regridpath/fregrid_parallel
 set HGRID = $regridpath/make_hgrid
@@ -120,7 +123,7 @@ set MOSAIC = $regridpath/make_solo_mosaic
 source /usr/share/modules/init/csh
 module purge
 
-module load comp-intel
+module load comp-intel/2020.4.304
 module load mpi-hpe/mpt
 module load python3
 #SLES12
@@ -129,7 +132,6 @@ module load hdf5/1.8.18_serial
 module load netcdf/4.4.1.1_serial 
 module load pkgsrc
 module load nco/4.6.7
-
 
 limit stacksize unlimited
 
@@ -246,6 +248,9 @@ endif
 
 
 if ( $schmidt > 0 ) then
+   echo $NLON $NLAT $stretch
+#   @ NLON = $NLON * $stretch
+#   @ NLAT = $NLAT * $stretch
    echo 'nlon nlat = ' $NLON $NLAT
    $HGRID  --grid_type gnomonic_ed --nlon $nlon2 --do_schmidt --stretch_factor $stretch  --target_lon $tlon  --target_lat $tlat
 else
@@ -258,6 +263,10 @@ endif
 endif
 
 #   Either copy  or create a mosaic file 
+
+### cp $fregrid_parallel:h/{$RES}_cube_mosaic.nc  cube_mosaic.nc
+
+### cp {$RES}_cube_mosaic.nc  cube_mosaic.nc
 
 $MOSAIC --num_tiles 6 --dir ./  --mosaic_name cube_mosaic
 
@@ -319,6 +328,7 @@ foreach File ( $diagFiles )
 
   set basename = $File:r:r
 
+#  set data_out = ${basename}_lat_lon      
   set data_out = ${basename}      
 
   echo "Encountered  ' $#onedvars  ' 1-D variables " in  " $File   $basename  ': " $onedvars 
@@ -371,6 +381,9 @@ foreach File ( $diagFiles )
           ncks -A akpk.nc $data_out.nc
           /bin/rm -f akpk.nc
    endif
+
+      # remove files from working directory
+###    rm -f $basename.tile*.nc
 
 #      move resulting gridded file back to archive 
     mv $data_out.nc  $histDir/$DATE.$data_out.nc 
