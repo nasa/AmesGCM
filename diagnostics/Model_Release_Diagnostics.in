@@ -84,31 +84,31 @@ HOLD ON
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Temperature [K] (L$_s=0\degree$)
-Main Variable  = 01336.atmos_average_pstd.temp
+Main Variable  = 00668.atmos_average_pstd.temp
 Cmin, Cmax     = 110,240
 Ls 0-360       = 355,5
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.temp
+2nd Variable   = 00668.atmos_average_pstd.temp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = rainbow |scale = lin
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Zonal Wind [m/s] (L$_s=0\degree$)
-Main Variable  = 01336.atmos_average_pstd.ucomp
+Main Variable  = 00668.atmos_average_pstd.ucomp
 Cmin, Cmax     = -140,140
 Ls 0-360       = 355,5
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.ucomp
+2nd Variable   = 00668.atmos_average_pstd.ucomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Meridional Wind [m/s] (L$_s=0\degree$)
-Main Variable  = 01336.atmos_average_pstd.vcomp
+Main Variable  = 00668.atmos_average_pstd.vcomp
 Cmin, Cmax     = -10,10
 Ls 0-360       = 355,5
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.vcomp
+2nd Variable   = 00668.atmos_average_pstd.vcomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
@@ -120,22 +120,22 @@ HOLD ON 2,2
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Opacity [op/Pa]*10^3 (L$_s=0\degree$)
-Main Variable  = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Cmin, Cmax     = 0,1.4
 Ls 0-360       = 355,5
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Contours Var 2 = 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
 # NEW
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Mixing Ratio [ppm] (L$_s=0\degree$)
-Main Variable  = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Cmin, Cmax     = 0,13
 Ls 0-360       = 355,5
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Contours Var 2 = 1, 2, 3, 4, 5
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
@@ -147,31 +147,31 @@ HOLD ON
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Temperature [K] (L$_s=90\degree$)
-Main Variable  = 01336.atmos_average_pstd.temp
+Main Variable  = 00668.atmos_average_pstd.temp
 Cmin, Cmax     = 110,240
 Ls 0-360       = 85,95
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.temp
+2nd Variable   = 00668.atmos_average_pstd.temp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = rainbow |scale = lin
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Zonal Wind [m/s] (L$_s=90\degree$)
-Main Variable  = 01336.atmos_average_pstd.ucomp
+Main Variable  = 00668.atmos_average_pstd.ucomp
 Cmin, Cmax     = -165,165
 Ls 0-360       = 85,95
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.ucomp
+2nd Variable   = 00668.atmos_average_pstd.ucomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Meridional Wind [m/s] (L$_s=90\degree$)
-Main Variable  = 01336.atmos_average_pstd.vcomp
+Main Variable  = 00668.atmos_average_pstd.vcomp
 Cmin, Cmax     = -20,20
 Ls 0-360       = 85,95
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.vcomp
+2nd Variable   = 00668.atmos_average_pstd.vcomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
@@ -183,22 +183,22 @@ HOLD ON 2,2
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Opacity [op/Pa]*10^3 (L$_s=90\degree$)
-Main Variable  = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Cmin, Cmax     = 0,1.4
 Ls 0-360       = 85,95
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Contours Var 2 = 0.1, 0.2, 0.3, 0.4, 0.5
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
 # NEW
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Mixing Ratio [ppm] (L$_s=90\degree$)
-Main Variable  = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Cmin, Cmax     = 0,13
 Ls 0-360       = 85,95
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Contours Var 2 = 1, 2, 3, 4, 5
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
@@ -210,31 +210,31 @@ HOLD ON
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Temperature [K] (L$_s=180\degree$)
-Main Variable  = 01336.atmos_average_pstd.temp
+Main Variable  = 00668.atmos_average_pstd.temp
 Cmin, Cmax     = 110,240
 Ls 0-360       = 175,185
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.temp
+2nd Variable   = 00668.atmos_average_pstd.temp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = rainbow |scale = lin
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Zonal Wind [m/s] (L$_s=180\degree$)
-Main Variable  = 01336.atmos_average_pstd.ucomp
+Main Variable  = 00668.atmos_average_pstd.ucomp
 Cmin, Cmax     = -135,135
 Ls 0-360       = 175,185
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.ucomp
+2nd Variable   = 00668.atmos_average_pstd.ucomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Meridional Wind [m/s] (L$_s=180\degree$)
-Main Variable  = 01336.atmos_average_pstd.vcomp
+Main Variable  = 00668.atmos_average_pstd.vcomp
 Cmin, Cmax     = -11,11
 Ls 0-360       = 175,185
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.vcomp
+2nd Variable   = 00668.atmos_average_pstd.vcomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
@@ -246,22 +246,22 @@ HOLD ON 2,2
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Opacity [op/Pa]*10^3 (L$_s=180\degree$)
-Main Variable  = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Cmin, Cmax     = 0,1.4
 Ls 0-360       = 175,185
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Contours Var 2 = 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
 # NEW
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Mixing Ratio [ppm] (L$_s=180\degree$)
-Main Variable  = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Cmin, Cmax     = 0,13
 Ls 0-360       = 175,185
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Contours Var 2 = 1, 4, 8, 12
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
@@ -273,31 +273,31 @@ HOLD ON
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Temperature [K] (L$_s=270\degree$)
-Main Variable  = 01336.atmos_average_pstd.temp
+Main Variable  = 00668.atmos_average_pstd.temp
 Cmin, Cmax     = 110,240
 Ls 0-360       = 265,275
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.temp
+2nd Variable   = 00668.atmos_average_pstd.temp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = rainbow |scale = lin
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Zonal Wind [m/s] (L$_s=270\degree$)
-Main Variable  = 01336.atmos_average_pstd.ucomp
+Main Variable  = 00668.atmos_average_pstd.ucomp
 Cmin, Cmax     = -230,230
 Ls 0-360       = 265,275
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.ucomp
+2nd Variable   = 00668.atmos_average_pstd.ucomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Meridional Wind [m/s] (L$_s=270\degree$)
-Main Variable  = 01336.atmos_average_pstd.vcomp
+Main Variable  = 00668.atmos_average_pstd.vcomp
 Cmin, Cmax     = -85,85
 Ls 0-360       = 265,275
 Lon +/-180     = None
-2nd Variable   = 01336.atmos_average_pstd.vcomp
+2nd Variable   = 00668.atmos_average_pstd.vcomp
 Contours Var 2 = None
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = PiYG |scale = lin 
 
@@ -309,22 +309,22 @@ HOLD ON 2,2
 
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Opacity [op/Pa]*10^3 (L$_s=270\degree$)
-Main Variable  = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Cmin, Cmax     = 0,1.4
 Ls 0-360       = 265,275
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dustref_per_pa]*1.e3
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
 Contours Var 2 = 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
 # NEW
 <<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Dust Mixing Ratio [ppm] (L$_s=270\degree$)
-Main Variable  = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Cmin, Cmax     = 0,13
 Ls 0-360       = 265,275
 Lon +/-180     = None
-2nd Variable   = [01336.atmos_average_pstd.dst_mass_mom]*1.e6
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
 Contours Var 2 = 1, 4, 8, 12
 Axis Options  : Lat = [-90,90] | level[Pa/m] = [1000,0.05] | cmap = Wistia |scale = lin 
 
@@ -340,31 +340,31 @@ HOLD ON
 
 <<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Surface Temperature [K]
-Main Variable  = [01336.atmos_average_pstd.ts]
+Main Variable  = [00668.atmos_average_pstd.ts]
 Cmin, Cmax     = 140,280
 Lon +/-180     = None
 Level [Pa/m]   = None
-2nd Variable   = [01336.atmos_average_pstd.ts]
+2nd Variable   = [00668.atmos_average_pstd.ts]
 Contours Var 2 = 160, 180, 200, 220, 240, 260
 Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = jet |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Surface CO2 Ice [kg/m$^2$]
-Main Variable  = [01336.atmos_average_pstd.co2ice_sfc]
+Main Variable  = [00668.atmos_average_pstd.co2ice_sfc]
 Cmin, Cmax     = 0,1000
 Lon +/-180     = None
 Level [Pa/m]   = None
-2nd Variable   = [01336.atmos_average_pstd.co2ice_sfc]
+2nd Variable   = [00668.atmos_average_pstd.co2ice_sfc]
 Contours Var 2 = 200, 400, 600, 800
 Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = rainbow |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Surface Stress [mN/m$^2$]
-Main Variable  = [01336.atmos_average_pstd.stress]*1.e3
+Main Variable  = [00668.atmos_average_pstd.stress]*1.e3
 Cmin, Cmax     = 0,30
 Lon +/-180     = None
 Level [Pa/m]   = None
-2nd Variable   = [01336.atmos_average_pstd.stress]*1.e3
+2nd Variable   = [00668.atmos_average_pstd.stress]*1.e3
 Contours Var 2 = 3, 6, 9, 12
 Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = jet |scale = lin 
 
@@ -376,41 +376,41 @@ HOLD ON  2,2
 
 <<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Column Visible Dust OD (norm.) [op]
-Main Variable  = [01336.atmos_average_pstd.taudust_VIS]/[01336.atmos_average_pstd.ps]*610
+Main Variable  = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610
 Cmin, Cmax     = 0,1
 Lon +/-180     = None
 Level [Pa/m]   = None
-2nd Variable   = [01336.atmos_average_pstd.taudust_VIS]/[01336.atmos_average_pstd.ps]*610
+2nd Variable   = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610
 Contours Var 2 = 0.2, 0.3, 0.4, 0.6, 0.8, 0.9
 Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = Wistia |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Column Dust Mixing Ratio [g/m$^2$]
-Main Variable  = [01336.atmos_average_pstd.dst_mass_mom_col]*1.e3
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom_col]*1.e3
 Cmin, Cmax     = None
 Lon +/-180     = None
 Level [Pa/m]   = None
-2nd Variable   = [01336.atmos_average_pstd.dst_mass_mom_col]*1.e3
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom_col]*1.e3
 Contours Var 2 = None
 Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = Wistia |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Lifting Rate [µm/day]
-Main Variable  = [01336.atmos_average_pstd.dst_mass_source]/2500*1.e6*88775
+Main Variable  = [00668.atmos_average_pstd.dst_mass_source]/2500*1.e6*88775
 Cmin, Cmax     = 0,0.45
 Lon +/-180     = None
 Level [Pa/m]   = None
-2nd Variable   = [01336.atmos_average_pstd.dst_mass_source]/2500*1.e6*88775
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_source]/2500*1.e6*88775
 Contours Var 2 = 0.1, 0.2, 0.3, 0.4
 Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = jet |scale = lin 
 
 <<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
 Title          = Zonal Mean Deposition Rate [µm/day]
-Main Variable  = [01336.atmos_average_pstd.dst_mass_dep]/2500*1.e6*88775
+Main Variable  = [00668.atmos_average_pstd.dst_mass_dep]/2500*1.e6*88775
 Cmin, Cmax     = 0,0.45
 Lon +/-180     = None
 Level [Pa/m]   = None
-2nd Variable   = [01336.atmos_average_pstd.dst_mass_dep]/2500*1.e6*88775
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_dep]/2500*1.e6*88775
 Contours Var 2 = 0.1, 0.2, 0.3, 0.4
 Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = jet |scale = lin 
 
@@ -427,7 +427,7 @@ HOLD ON 2,2
 <<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
 Title          = Global Mean Visible Dust OD (norm.) [op]
 Legend         = Normalized Dust OD
-Main Variable  = [01336.atmos_average_pstd.taudust_VIS]/[01336.atmos_average_pstd.ps]*610
+Main Variable  = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610
 Ls 0-360       = AXIS
 Latitude       = all
 Lon +/-180     = all
@@ -448,7 +448,7 @@ HOLD ON
 <<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
 Title          = Annual Global Mean Surface Temperature (ts) [K]
 Legend         = Surface Temperature
-Main Variable  = 01336.atmos_average_pstd.ts
+Main Variable  = 00668.atmos_average_pstd.ts
 Ls 0-360       = AXIS
 Lon +/-180     = all
 Latitude       = all
@@ -459,7 +459,7 @@ Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [195,220] | linest
 <<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
 Title          = Annual Global Mean Surface Pressure (ps) [Pa]
 Legend         = Surface Pressure
-Main Variable  = 01336.atmos_average_pstd.ps
+Main Variable  = 00668.atmos_average_pstd.ps
 Ls 0-360       = AXIS
 Lon +/-180     = all
 Latitude       = all
@@ -469,11 +469,11 @@ Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [530,690] | linest
 
 <<<<<<<<<<<<<<| Plot 2D lon X lat = True |>>>>>>>>>>>>>
 Title          = Annual Mean Surface Temperature (ts) [K]
-Main Variable  = 01336.atmos_average_pstd.ts
+Main Variable  = 00668.atmos_average_pstd.ts
 Cmin, Cmax     = 150,250
 Ls 0-360       = all
 Level Pa/m     = None
-2nd Variable   = 01336.atmos_average_pstd.ts
+2nd Variable   = 00668.atmos_average_pstd.ts
 Contours Var 2 = None
 Axis Options  : lon = [-180,180] | lat = [-90,90] | cmap = jet | scale = lin | proj = cart
 
