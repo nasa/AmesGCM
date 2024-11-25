@@ -298,7 +298,6 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                            dustref_fix)
     dustref(:,:,:) = 0.
     cldref(:,:,:,:) = 0.
-    cldco2ref(:,:,:) = 0.
     nice= ice_bin_indx(1)
     cldice(:,:,:)= r(:,:,:,nice)
 
