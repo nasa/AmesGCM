@@ -50,7 +50,6 @@ logical :: use_dust_lwheat= .false.              ! do simple dust IR heating
 integer :: rad_calc_intv = 1848                 ! radiative time step
 
 logical :: do_diurnal_avg_rad = .false.         ! do average insolation
-logical :: do_rad_diagnostic_calc = .false.     ! do diagnostic calculation with specified temperature and dust
 
 logical :: use_ames_lw_rad = .true.            ! use ames IR radiation
 logical :: use_ames_sw_rad = .true.            ! use ames visible radiation
@@ -133,7 +132,7 @@ subroutine radiation_driver ( is, js, lon, lat, dt, Time,                 &
                                p_half, p_full, z_half, tsfc, albedo,      &
                                sfc_emiss, t, r, tdt, rdt,                 &
                                swfsfc, lwfsfc, cosz, tdtlw,tdt_rad,       &
-                               taudust, taucloud, taudust_mom, & 
+                               taudust, taucloud, taudust_mom,            & 
                                taudust_fix, pref)
 !=======================================================
 !  main radiation driver
