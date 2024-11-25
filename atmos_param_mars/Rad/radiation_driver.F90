@@ -112,9 +112,8 @@ integer :: id_irupflx_sfc, id_irdnflx_sfc, id_swupflx_sfc, id_swdnflx_sfc
 integer :: id_swnetflx, id_irnetflx
 integer :: id_taudust_VIS,id_taudust_IR
 integer :: id_taucloud_VIS,id_taucloud_IR, id_taucloud_12um, id_taucloud_UV
-integer :: id_tauco2cloud_VIS,id_tauco2cloud_IR
 integer :: id_trad7, id_trad23, id_trad32
-integer :: id_dustref, id_cldref, id_cldco2ref, id_dso, id_cldref_uv
+integer :: id_dustref, id_cldref, id_dso, id_cldref_uv
 integer, dimension(:), allocatable :: id_taudust_reff_VIS, id_taudust_reff_IR
 
 
@@ -134,7 +133,7 @@ subroutine radiation_driver ( is, js, lon, lat, dt, Time,                 &
                                p_half, p_full, z_half, tsfc, albedo,      &
                                sfc_emiss, t, r, tdt, rdt,                 &
                                swfsfc, lwfsfc, cosz, tdtlw,tdt_rad,       &
-                               taudust, taucloud, tauco2cloud, taudust_mom, & 
+                               taudust, taucloud, taudust_mom, & 
                                taudust_fix, pref)
 !=======================================================
 !  main radiation driver
@@ -157,7 +156,7 @@ real, intent(inout), dimension(:,:,:)   :: tdtlw
 real, intent(out),   dimension(:,:)     :: swfsfc, lwfsfc
 real, intent(out),   dimension(:,:)     :: cosz
 real, intent(out),    dimension(:,:,:)   :: tdt_rad
-real, intent(out),    dimension(:,:,:)   :: taudust, taucloud, tauco2cloud
+real, intent(out),    dimension(:,:,:)   :: taudust, taucloud
 real, intent(out),    dimension(:,:,:)   :: taudust_mom, taudust_fix
 real, intent(in)                        :: pref
 
@@ -171,8 +170,6 @@ real, dimension(size(t,1),size(t,2)) :: sfc_ir_flx
 real, dimension(size(t,1),size(t,2),size(t,3)) :: hsw, heatra, fluxout
 real, dimension(size(t,1),size(t,2),size(t,3),8) :: lw_heating_band
 real, dimension(size(t,1),size(t,2),size(t,3)) :: lw_15umHR
-real, dimension(size(t,1),size(t,2),size(t,3)+1) :: irupflx_d,irdnflx_d,swupflx_d,swdnflx_d
-real, dimension(size(t,1),size(t,2),size(t,3)+1) :: swnetflx_d,irnetflx_d
 real, dimension(size(t,1),size(t,2),size(t,3)+1) :: irupflx,irdnflx,swupflx,swdnflx
 real, dimension(size(t,1),size(t,2),size(t,3)+1) :: swnetflx,irnetflx
 
@@ -198,7 +195,7 @@ real, dimension(size(t,1),size(t,2),size(t,3))   :: tau_ames, darray
 real, dimension(size(t,1),size(t,2),size(t,3))   :: pf_mb
 real, dimension(size(t,1),size(t,2),size(t,3)+1) :: ph_mb
 
-real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref, cldco2ref
+real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref
 real, dimension(size(t,1),size(t,2),size(t,3),2)   :: cldref
 real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref_bin, dustref_fix, cldice
 real, dimension(size(t,1),size(t,2),size(t,3))   :: dustref_mom
@@ -318,7 +315,7 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                    tnew,tsfc,rnew,trans,flx_sfc,        &
                    albedo, sfc_emiss, cosz,             &
                    dustref, dustref_bin, dustref_fix,   &
-                   cldref, cldco2ref, cldice,           &
+                   cldref, cldice,           &
                    use_ames_sw_rad, use_ames_lw_rad,    &
                    r_orbit,                             &
                    heatra,hsw,outflx,                   &
@@ -326,7 +323,7 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
                    irupflx,irdnflx,swupflx,swdnflx,     &
                    swnetflx,irnetflx,                   &
                    taudust,taucloud,                    &
-                   tauco2cloud, taudust_mom,            &
+                   taudust_mom,            &
                    lw_heating_band,lw_15umHR,.false.,   &
                    tstrat(is:ie,js:je),                 &
                    tstrat_dt,                           &
@@ -398,10 +395,6 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     opac(:,:,:)= cldref(:,:,:,2) ! / delp(:,:,:)
     if (id_cldref_uv > 0) used = send_data ( id_cldref_uv, opac,  time, is, js )
 
-    ! write out co2 cloud field
-    opac(:,:,:)= cldco2ref(:,:,:) ! / delp(:,:,:)
-    if (id_cldco2ref > 0) used = send_data ( id_cldco2ref, opac,  time, is, js )
-
 
     !            Combine lwave and shortwave fluxes
     if (id_swheat > 0)  used = send_data ( id_swheat, hsw,    Time, is, js)
@@ -412,8 +405,6 @@ if( first_rad .or.  mod( seconds, rad_calc_intv) == 0 ) then   !----------------
     if (id_taucloud_IR > 0)  used = send_data ( id_taucloud_IR,taucloud(:,:,2),   Time, is, js)
     if (id_taucloud_12um > 0)  used = send_data ( id_taucloud_12um,taucloud(:,:,3),   Time, is, js)
     if (id_taucloud_UV > 0)  used = send_data ( id_taucloud_UV,taucloud(:,:,4),   Time, is, js)
-    if (id_tauco2cloud_VIS > 0)  used = send_data ( id_tauco2cloud_VIS,tauco2cloud(:,:,1),   Time, is, js)
-    if (id_tauco2cloud_IR > 0)  used = send_data ( id_tauco2cloud_IR,tauco2cloud(:,:,2),   Time, is, js)
     !           write out moment column dust field by effective radius
     do nt=1,ndust_mass
         ndx= dust_mass_indx(nt)
@@ -638,10 +629,6 @@ id_areo = register_diag_field ( model, 'areo', (/null_axis_id/),          &
                                        Time, 'Areocentric Longitude', 'deg', &
                                       missing_value=missing_value )
 
-!id_insol = register_diag_field ( model, 'insol', axes(1:2),          &
-!                                       Time, 'Solar insolation', 'W/m2', &
-!                                      missing_value=missing_value )
-
 id_ir_flx = register_diag_field ( model, 'sfcirflx', axes(1:2),      &
                                  Time, 'surface net downward IR flux', 'W/m2', &
                                        missing_value=missing_value )
@@ -694,10 +681,6 @@ id_lw15HR = register_diag_field ( model, 'lw15HR', axes(1:3),        &
                                        Time, 'NLTE 15um heating', 'K/s', &
                                       missing_value=missing_value )
 
-!id_lwdust = register_diag_field ( model, 'lwdust', axes(1:3),       &
-!                                  Time, 'IR dust heating', 'K/s', &
-!                                      missing_value=missing_value )
-
 id_opac = register_diag_field ( model, 'opac', axes(1:3),            &
                                Time, 'visible dust opacity', 'op/Pa', &
                                       missing_value=missing_value )
@@ -720,10 +703,6 @@ id_cldref = register_diag_field ( model, 'cldref', axes(1:3),      &
 
 id_cldref_uv = register_diag_field ( model, 'cldref_uv', axes(1:3),      &
                                Time, 'UV water ice cloud opacity', 'op/level', &
-                                      missing_value=missing_value )
-
-id_cldco2ref = register_diag_field ( model, 'cldco2ref', axes(1:3),      &
-                               Time, 'visible co2 ice cloud opacity', 'op/level', &
                                       missing_value=missing_value )
 
 id_dso = register_diag_field ( model, 'dso', axes(1:3),      &
@@ -816,14 +795,6 @@ id_taucloud_12um = register_diag_field ( model, 'taucloud_12um', axes(1:2),&
 
 id_taucloud_UV = register_diag_field ( model, 'taucloud_UV', axes(1:2),&
                               Time, 'Column cloud opacity UV', 'op', &
-                              missing_value=missing_value )
-
-id_tauco2cloud_VIS = register_diag_field ( model, 'tauco2cloud_VIS', axes(1:2),&
-                              Time, 'Column CO2 cloud opacity VIS', 'op', &
-                              missing_value=missing_value )
-
-id_tauco2cloud_IR = register_diag_field ( model, 'tauco2cloud_IR', axes(1:2),&
-                              Time, 'Column CO2 cloud opacity IR', 'op', &
                               missing_value=missing_value )
 
 id_trad7 = register_diag_field ( model, 'trad7', axes(1:2),          &
