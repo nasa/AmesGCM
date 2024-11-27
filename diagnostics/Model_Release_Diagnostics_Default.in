@@ -1,0 +1,551 @@
+===================== |MarsPlot V3.3| ===================
+# ================================================= INSTRUCTIONS =================================================
+# - Copy/paste template for the desired plot type. - Do not modify text left of an equal '=' sign.
+# - Add comments using '#'                         - Skip plots by setting <<<< Plot = False >>>>
+# - Capitalize 'True', 'False', and 'None'.        - Do not use quotes ('') anywhere in this file.
+#
+# Group figures onto pages using'HOLD ON' and 'HOLD OFF'.
+# Optionally, use 'row,col' to specify the layout: HOLD ON 2,3'.
+# Use 'ADD LINE' between 1D plots to overplot on the same figure.
+# Figures templates must appear after 'START' and before 'STOP'.
+# Set the colorbar range with 'Cmin, Cmax'. Scientific notation (e.g. 1e-6, 2e3) is supported.
+# Set the colorbar intervals directly by providing a list (e.g. 1e-6, 1e-4, 1e-2, 1e-0).
+# Set the contour intervals for '2nd Variable' in a list (e.g. 150, 200, 250, 300, 350).
+# The vertical grid of the *.nc file used in the plot determines what 'Level' refers to.
+#    'Level' can be: 'level', 'pfull', 'pstd', 'plevs' [Pa] or 'zstd', 'zagl', or 'zgrid' [m].
+#
+# ============================================ ALGEBRA ============================================
+# Use square brackets '[]' for element-wise operations:
+#    '[fixed.zsurf]/(10.**3)'            Convert between units ([m] to [km], in this case).
+#    '[file.var1]/[file.var2]*610'       Multiply variables together.
+#    '[file.var]-[file@2.var]'           Difference plot of 'var' from 2 simulations.
+#    '[file.var]-[file.var{lev=10}]'     Difference plot of 'var' at two levels.
+# Square brackets support the following expressions: sqrt, log, exp, abs, min, max, & mean.
+#
+# ========================================= FREE DIMENSIONS =========================================
+# Dimensions can be 'time', 'lev', 'lat', 'lon', or 'tod'.
+# Dimensions default to None when a value or range is not specified. None corresponds to:
+#    time  =  -1      The last (most recent) timestep (Nt).
+#    lev   =  sfc     Nz for *.nc files, 0 for *_pstd.nc files.
+#    lat   =  0       Equator
+#    lon   =  'all'   Zonal average over all longitudes
+#    tod   =  '15'    3 PM UT
+# Setting a dimension equal to a number finds the value closest to that number.
+# Setting a dimension equal to 'all' averages the dimension over all values.
+# Setting a dimension equal to a range averages the dimension over the values in the range.
+# You can also overwrite a dimension in the Main Variable input using curvy brackets '{}' and the
+#    dimension name. Separate the arguments with semi-colons ';'
+#        e.g. Main Variable  = atmos_average.temp{ls = 90; lev= 5.,10; lon= all; lat=45}
+#    Values must correspond to the units of the variable in the file:
+#        time [Ls], lev [Pa/m], lon [+/-180 deg], and lat [deg].
+# * You can only select a time of day (tod) in diurn files using this syntax:
+#        e.g. Main Variable  = atmos_diurn.ps{tod = 20}
+# You can also specify the fontsize in Title using curvy brackets and 'size':
+#        e.g. Title = Temperature [K] {size = 20}.
+#
+# ==================================== TIME SERIES AND 1D PLOTS ====================================
+# Set the X axis variable by indicating AXIS after the appropriate dimension:
+#        e.g. Ls = AXIS
+# The other dimensions remain FREE DIMENSIONS and accept values as described above.
+# The 'Diurnal [hr]' dimension only accepts 'AXIS' or 'None'. Indicate time of day only using the'
+#    'tod' syntax as described in FREE DIMENSIONS.
+#
+# ================================== AXIS OPTIONS AND PROJECTIONS ==================================
+# Set the X and Y axis limits, map projection, colormap, and linestyle under Axis Options.
+# All Matplolib styles are supported.
+#    'cmap'  colormap    'jet' (winds), 'nipy_spectral' (temperature), 'bwr' (diff plot), etc.
+#    'scale' gradient    'lin' (linear), 'log' (logarithmic; Cmin, Cmax is typically expected.
+#    'line'  linestyle   '-r' (solid red), '--g' (dashed green), '-ob' (solid blue + markers).
+#    'proj'  projection  Cylindrical: 'cart' (Cartesian), 'robin' (Robinson), 'moll' (Mollweide),
+#                        Azithumal: 'Npole lat' (North Pole), 'Spole lat' (South Pole),
+#                        'ortho lon,lat' (Orthographic).
+#
+# ===================== FILES FROM MULTIPLE SIMULATIONS =====================
+# Under <<< Simulations >>>, there are numbered lines ('N>') for you to use to indicate the
+#    path to the *.nc file you want to reference. Empty fields are ignored.
+# Provide the FULL PATH on the line, e.g. '2> /u/User/FV3/path/to/history'.
+# Specify the *.nc file from which to plot using the '@' symbol + the simulation number:
+#    in the call to Main Variable, e.g. Main Variable = atmos_average@2.temp
+#
+<<<<<<<<<<<<<<<<<<<<<< Simulations >>>>>>>>>>>>>>>>>>>>>
+ref> None
+2>
+3>
+=======================================================
+START
+
+
+# ----------------------------------------------------------------------
+# 								NOTES
+# 1. This script assumes you are plotting output from the second year of
+#    a simulation, so the date prefix is '00668'. If this is incorrect,
+#    modify the dates in this file to match your output file names.
+#
+# 2. The colorbar ranges and contours in this template differ from those
+#    in Model_Release_Diagnostics_Default.in from the v3.1 release in
+#    2023. These have been altered so that the scaling of the colorbars
+# 	 is the same in the current Mars default diagnostic and the water
+#    cycle current Mars diagnostic.
+# ----------------------------------------------------------------------
+
+
+
+
+# Zonal Mean Circulation Plots: Zonal Wind, Meridional Wind, Temperature
+# at Cardinal Seasons
+# ----------------------------------------------------------------------
+#                                 Ls 0
+# ----------------------------------------------------------------------
+HOLD ON
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Temperature [K] (L$_s$=0$\degree$)
+Main Variable  = 00668.atmos_average_pstd.temp
+Cmin, Cmax     = 110,260
+Ls 0-360       = 355,5
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.temp
+Contours Var 2 = 130,140,150,160,170,180,190,200,210,220,230,240,250
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = rainbow |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Zonal Wind [m/s] (L$_s$=0$\degree$)
+Main Variable  = 00668.atmos_average_pstd.ucomp
+Cmin, Cmax     = -220,220
+Ls 0-360       = 355,5
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.ucomp
+Contours Var 2 = -200,-175,-150,-125,-100,-75,-50,-25,25,50,75,100,125,150,175,200
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Meridional Wind [m/s] (L$_s$=0$\degree$)
+Main Variable  = 00668.atmos_average_pstd.vcomp
+Cmin, Cmax     = -85,85
+Ls 0-360       = 355,5
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.vcomp
+Contours Var 2 = -80,-70,-60,-50,-40,-30,-20,-10,-5,5,10,20,30,40,50,60,70,80
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+HOLD OFF
+
+
+# ----------------------------------------------------------------------
+#                                 Ls 90
+# ----------------------------------------------------------------------
+HOLD ON
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Temperature [K] (L$_s$=90$\degree$)
+Main Variable  = 00668.atmos_average_pstd.temp
+Cmin, Cmax     = 110,260
+Ls 0-360       = 85,95
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.temp
+Contours Var 2 = 130,140,150,160,170,180,190,200,210,220,230,240,250
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = rainbow |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Zonal Wind [m/s] (L$_s$=90$\degree$)
+Main Variable  = 00668.atmos_average_pstd.ucomp
+Cmin, Cmax     = -220,220
+Ls 0-360       = 85,95
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.ucomp
+Contours Var 2 = -200,-175,-150,-125,-100,-75,-50,-25,25,50,75,100,125,150,175,200
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Meridional Wind [m/s] (L$_s$=90$\degree$)
+Main Variable  = 00668.atmos_average_pstd.vcomp
+Cmin, Cmax     = -85,85
+Ls 0-360       = 85,95
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.vcomp
+Contours Var 2 = -80,-70,-60,-50,-40,-30,-20,-10,-5,5,10,20,30,40,50,60,70,80
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+HOLD OFF
+
+
+# ----------------------------------------------------------------------
+#                                 Ls 180
+# ----------------------------------------------------------------------
+HOLD ON
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Temperature [K] (L$_s$=180$\degree$)
+Main Variable  = 00668.atmos_average_pstd.temp
+Cmin, Cmax     = 110,260
+Ls 0-360       = 175,185
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.temp
+Contours Var 2 = 130,140,150,160,170,180,190,200,210,220,230,240,250
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = rainbow |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Zonal Wind [m/s] (L$_s$=180$\degree$)
+Main Variable  = 00668.atmos_average_pstd.ucomp
+Cmin, Cmax     = -220,220
+Ls 0-360       = 175,185
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.ucomp
+Contours Var 2 = -200,-175,-150,-125,-100,-75,-50,-25,25,50,75,100,125,150,175,200
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Meridional Wind [m/s] (L$_s$=180$\degree$)
+Main Variable  = 00668.atmos_average_pstd.vcomp
+Cmin, Cmax     = -85,85
+Ls 0-360       = 175,185
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.vcomp
+Contours Var 2 = -80,-70,-60,-50,-40,-30,-20,-10,-5,5,10,20,30,40,50,60,70,80
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+HOLD OFF
+
+
+# ----------------------------------------------------------------------
+#                                 Ls 270
+# ----------------------------------------------------------------------
+HOLD ON
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Temperature [K] (L$_s$=270$\degree$)
+Main Variable  = 00668.atmos_average_pstd.temp
+Cmin, Cmax     = 110,260
+Ls 0-360       = 265,275
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.temp
+Contours Var 2 = 130,140,150,160,170,180,190,200,210,220,230,240,250
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = rainbow |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Zonal Wind [m/s] (L$_s$=270$\degree$)
+Main Variable  = 00668.atmos_average_pstd.ucomp
+Cmin, Cmax     = -220,220
+Ls 0-360       = 265,275
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.ucomp
+Contours Var 2 = -200,-175,-150,-125,-100,-75,-50,-25,25,50,75,100,125,150,175,200
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Meridional Wind [m/s] (L$_s$=270$\degree$)
+Main Variable  = 00668.atmos_average_pstd.vcomp
+Cmin, Cmax     = -85,85
+Ls 0-360       = 265,275
+Lon +/-180     = None
+2nd Variable   = 00668.atmos_average_pstd.vcomp
+Contours Var 2 = -80,-70,-60,-50,-40,-30,-20,-10,-5,5,10,20,30,40,50,60,70,80
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = PiYG |scale = lin
+
+HOLD OFF
+
+
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+
+
+
+# Zonal Mean Tracer Plots: Dust at Cardinal Seasons
+# ---------------------------------------------------------------------
+#                                 Ls 0
+# ---------------------------------------------------------------------
+HOLD ON 2,2
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust MMR [ppm] (L$_s$=0$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Cmin, Cmax     = 0,25
+Ls 0-360       = 355,5
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Contours Var 2 = 1,2,4,6,8
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust Opacity [op*10$^3$/Pa] (L$_s$=0$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Cmin, Cmax     = 0.1,4
+Ls 0-360       = 355,5
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Contours Var 2 = 0.25,0.5,1,1.5,2,2.5
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+HOLD OFF
+
+
+# ---------------------------------------------------------------------
+#                                 Ls 90
+# ---------------------------------------------------------------------
+HOLD ON 2,2
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust MMR [ppm] (L$_s$=90$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Cmin, Cmax     = 0,25
+Ls 0-360       = 85,95
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Contours Var 2 = 1,2,3,4
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust Opacity [op*10$^3$/Pa] (L$_s$=90$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Cmin, Cmax     = 0.1,4
+Ls 0-360       = 85,95
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Contours Var 2 = 0.25,0.5,1
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+HOLD OFF
+
+
+# ---------------------------------------------------------------------
+#                                 Ls 180
+# ---------------------------------------------------------------------
+HOLD ON 2,2
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust MMR [ppm] (L$_s$=180$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Cmin, Cmax     = 0,25
+Ls 0-360       = 175,185
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Contours Var 2 = 2,4,6,10,12,14
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust Opacity [op*10$^3$/Pa] (L$_s$=180$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Cmin, Cmax     = 0.1,4
+Ls 0-360       = 175,185
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Contours Var 2 = 0.25,0.5,1,1.5
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+HOLD OFF
+
+
+# ---------------------------------------------------------------------
+#                                 Ls 270
+# ---------------------------------------------------------------------
+HOLD ON 2,2
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust MMR [ppm] (L$_s$=270$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Cmin, Cmax     = 0,25
+Ls 0-360       = 265,275
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom]*1.e6
+Contours Var 2 = 2,4,6,8,10,12,14
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D lat X lev = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Dust Opacity [op*10$^3$/Pa] (L$_s$=270$\degree$)
+Main Variable  = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Cmin, Cmax     = 0.1,4
+Ls 0-360       = 265,275
+Lon +/-180     = None
+2nd Variable   = [00668.atmos_average_pstd.dustref_per_pa]*1.e3
+Contours Var 2 = 0.25,0.5,1,2,3
+Axis Options  : Lat = [-90,90] | level[Pa/m] = [1200.,0.03] | cmap = YlOrRd |scale = lin
+
+HOLD OFF
+
+
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+
+
+
+# Annual Zonal Mean Surface Fields Over Time: Temp, CO2 ice, Stress
+# -----------------------------------------------------------------
+HOLD ON
+
+<<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Surface Temperature [K]
+Main Variable  = 00668.atmos_average_pstd.ts
+Cmin, Cmax     = 130,280
+Lon +/-180     = None
+Level [Pa/m]   = None
+2nd Variable   = 00668.atmos_average_pstd.ts
+Contours Var 2 = 140,150,160,170,180,190,200,210,220,230,240,250,260,270
+Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = jet |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Surface CO2 Ice [kg/m$^2$]
+Main Variable  = 00668.atmos_average_pstd.co2ice_sfc
+Cmin, Cmax     = 0.1,1000
+Lon +/-180     = None
+Level [Pa/m]   = None
+2nd Variable   = 00668.atmos_average_pstd.co2ice_sfc
+Contours Var 2 = 50,100,200,300,400,500,600,700,800,900
+Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = rainbow |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
+Title          = Zonal Mean Surface Stress [mN/m$^2$]
+Main Variable  = [00668.atmos_average_pstd.stress]*1.e3
+Cmin, Cmax     = 0,40
+Lon +/-180     = None
+Level [Pa/m]   = None
+2nd Variable   = [00668.atmos_average_pstd.stress]*1.e3
+Contours Var 2 = 5,10,20,30
+Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = CMRmap_r |scale = lin
+
+HOLD OFF
+
+
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+
+
+
+# Annual Zonal Mean Column Dust, Lifting/Deposition Over Time
+# -----------------------------------------------------------
+HOLD ON 2,2
+
+<<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
+Title          = Annual Zonal Mean Column Visible Dust OD (norm.) [op]
+Main Variable  = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610.
+Cmin, Cmax     = 0,1.5
+Lon +/-180     = None
+Level [Pa/m]   = None
+2nd Variable   = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610.
+Contours Var 2 = 0.4,0.6,0.8,1,1.2,1.4
+Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = YlOrRd |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
+Title          = Annual Zonal Mean Column Dust MMR [g/m$^2$]
+Main Variable  = [00668.atmos_average_pstd.dst_mass_mom_col]*1.e3
+Cmin, Cmax     = 0,4
+Lon +/-180     = None
+Level [Pa/m]   = None
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_mom_col]*1.e3
+Contours Var 2 = 0.5,1,1.5,2,2.5,3,3.5
+Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = YlOrRd |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
+Title          = Annual Zonal Mean Dust Lifting Rate [µm/day]
+Main Variable  = [00668.atmos_average_pstd.dst_mass_source]/2500*1.e6*88775
+Cmin, Cmax     = 0.01,0.5
+Lon +/-180     = None
+Level [Pa/m]   = None
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_source]/2500*1.e6*88775
+Contours Var 2 = 0.05,0.1,0.2,0.3,0.4
+Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = PuRd |scale = lin
+
+<<<<<<<<<<<<<<| Plot 2D time X lat = True |>>>>>>>>>>>>>
+Title          = Annual Zonal Mean Dust Deposition Rate [µm/day]
+Main Variable  = [00668.atmos_average_pstd.dst_mass_dep]/2500*1.e6*88775
+Cmin, Cmax     = 0.01,0.5
+Lon +/-180     = None
+Level [Pa/m]   = None
+2nd Variable   = [00668.atmos_average_pstd.dst_mass_dep]/2500*1.e6*88775
+Contours Var 2 = 0.05,0.1,0.2,0.3,0.4
+Axis Options  : Ls = [None,None] | lat = [-90,90] | cmap = PuRd |scale = lin
+
+HOLD OFF
+
+
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+
+
+
+# Global Annual Surface Fields: Temperature and Pressure
+# ------------------------------------------------------
+HOLD ON
+
+<<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
+Title          = Annual Global Mean Surface Temperature [K]
+Legend         = Surface Temperature
+Main Variable  = 00668.atmos_average_pstd.ts
+Ls 0-360       = AXIS
+Lon +/-180     = all
+Latitude       = all
+Level [Pa/m]   = None
+Diurnal  [hr]  = None
+Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [195,225] | linestyle = - | axlabel = None
+
+<<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
+Title          = Annual Global Mean Surface Pressure [Pa]
+Legend         = Surface Pressure
+Main Variable  = 00668.atmos_average_pstd.ps
+Ls 0-360       = AXIS
+Lon +/-180     = all
+Latitude       = all
+Level [Pa/m]   = None
+Diurnal  [hr]  = None
+Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [520,700] | linestyle = - | axlabel = None
+
+<<<<<<<<<<<<<<| Plot 2D lon X lat = True |>>>>>>>>>>>>>
+Title          = Annual Mean Surface Temperature [K]
+Main Variable  = 00668.atmos_average_pstd.ts
+Cmin, Cmax     = 150,250
+Ls 0-360       = all
+Level Pa/m     = None
+2nd Variable   = 00668.atmos_average_pstd.ts
+Contours Var 2 = 160,170,180,190,200,210,220,230,240
+Axis Options  : lon = [None,None] | lat = [-90,90] | cmap = jet | scale = lin | proj = cart
+
+
+# Global Annual Dust Over Time
+# ----------------------------
+
+<<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
+Title          = Global Mean Visible Dust OD (norm.) [op]
+Legend         = Global
+Main Variable  = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610.
+Ls 0-360       = AXIS
+Latitude       = all
+Lon +/-180     = all
+Level [Pa/m]   = all
+Diurnal  [hr]  = None
+Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [0,1.2] | linestyle = - | axlabel = Dust Optical Depth
+
+ADD LINE
+
+<<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
+Title          = Global Mean Visible Dust OD (norm.) [op]
+Legend         = N.H.
+Main Variable  = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610.
+Ls 0-360       = AXIS
+Latitude       = 0,90
+Lon +/-180     = all
+Level [Pa/m]   = all
+Diurnal  [hr]  = None
+Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [0,1.2] | linestyle = - | axlabel = Dust Optical Depth
+
+ADD LINE
+
+<<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
+Title          = Global Mean Visible Dust OD (norm.) [op]
+Legend         = S.H.
+Main Variable  = [00668.atmos_average_pstd.taudust_VIS]/[00668.atmos_average_pstd.ps]*610.
+Ls 0-360       = AXIS
+Latitude       = -90,0
+Lon +/-180     = all
+Level [Pa/m]   = all
+Diurnal  [hr]  = None
+Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [0,1.2] | linestyle = - | axlabel = Dust Optical Depth
+
+
+HOLD OFF
