@@ -174,7 +174,7 @@ logical :: do_co2_condensation = .true.        ! flag: do atmospheric CO2 conden
 logical :: form_co2_clouds = .false.           ! flag: if doing atmospheric CO2 condensation, form clouds instead of putting condensed mass directly onto surface
 logical :: do_atmos_co2_loss = .true.          ! flag: do atmospheric CO2 loss from condensation
 real    :: klevs_ratio_pole = 0.92              ! top of atmosphere column ratio to do CO2 mass adjustment over for poles
-real    :: klevs_ratio_trop = 0.99             ! top of atmosphere column ratio to do CO2 mass adjustment over for tropics 
+real    :: klevs_ratio_trop = 0.991             ! top of atmosphere column ratio to do CO2 mass adjustment over for tropics 
 
 real    :: tau_diffusion = 1800.0              ! time scale for diffusion
 logical :: diffusion_smooth = .true.           ! flag: smooth diffusion over tau_diffusion time scale
@@ -708,7 +708,8 @@ if( do_mars_radiation  ) then
     call radiation_driver ( is, js, lon, lat, dt, Time, p_half, p_full, z_half,   &
                            tsurf, albedo, sfc_emiss, t, r, tdt, rdt,   &
                            swfsfc, lwfsfc, cosz, tdtlw, tdt_rad, taudust, &
-                           taucloud, tauco2cloud, taudust_mom, taudust_fix, p_ref )
+!                           taucloud, tauco2cloud, taudust_mom, taudust_fix, p_ref )
+                           taucloud, taudust_mom, taudust_fix, p_ref )
     dnflux = swfsfc + lwfsfc
 
 else if (do_simple_radiation) then
