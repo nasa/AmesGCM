@@ -496,7 +496,7 @@ set ASCII_DIR = $LRUN/ascii
 
 #------ The following supports expansion of namelist file (input.nml) contained cshell vars
 #------ Convert into fully resolved namelist:
-set expandVariables = $homedir/../src/FRE/sbin/expand_variables
+set expandVariables = $homedir/../src/FRE-bronx/sbin/expand_variables
 set FRE_JOBID = $0:t.o`date +%s`
 set -r envFile = /tmp/shell.variables.$FRE_JOBID
 set -r envFileDelay = 2
