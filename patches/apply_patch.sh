@@ -17,7 +17,6 @@ cd ../AmesGCM
 cp -r build_run/bin ../../
 cp build_run/compile.archives ../../exec
 cp build_run/diag_table.ext ../../exec
-cp build_run/fms_mars_default_v3.2 ../../exec
-cp build_run/fms_earlymars_500mb_v3.2 ../../exec
+cp build_run/fms_* ../../exec
 
 exit 0
