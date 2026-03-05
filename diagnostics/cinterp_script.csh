@@ -17,7 +17,7 @@ set NFILES = 0
 set date = 0
 set VARS = ( ) 
 set NVARS = 0
-set conserv = 0
+set conserv = 1
 set slow = 0
 set schmidt = 0
 set stretch = 1.
@@ -113,25 +113,13 @@ endif
 #SLES11
 #set regridpath = /u/mkahre/MCMC/analysis/lib/SLES11
 #SLES12
-set regridpath = /u/mkahre/MCMC/analysis/lib/fregrid_150422
+set regridpath = /usr/local/bin
 #set regridpath = /u/rurata/fregrid_150422
 set fregrid = $regridpath/fregrid
 set fregrid_parallel = $regridpath/fregrid_parallel
 set HGRID = $regridpath/make_hgrid
 set MOSAIC = $regridpath/make_solo_mosaic
 
-source /usr/share/modules/init/csh
-module purge
-
-module load comp-intel/2020.4.304
-module load mpi-hpe/mpt
-module load python3
-#SLES12
-module load hdf4/4.2.12
-module load hdf5/1.8.18_serial
-module load netcdf/4.4.1.1_serial 
-module load pkgsrc
-module load nco/4.6.7
 
 limit stacksize unlimited
 
