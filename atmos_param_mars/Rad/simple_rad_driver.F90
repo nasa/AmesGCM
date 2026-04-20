@@ -4,13 +4,20 @@ use constants_mod, only: KAPPA, CP_AIR, GRAV, STEFAN, PI, RADIAN,      &
                          diffac, seconds_per_day,  RAD_TO_DEG 
  
 
-use fms_mod, only: error_mesg, FATAL,                      &
-                   open_namelist_file, check_nml_error,                &
-                   mpp_pe, mpp_root_pe, close_file,                    &
-                   write_version_number, stdlog,                       &
-                   uppercase, read_data, write_data, field_size
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
 
-use fms2_io_mod,            only:  file_exists
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
+use   mpp_domains_mod, only: domain2d
+use mpp_mod, only: input_nml_file
 use time_manager_mod, only: time_type, get_time
 use diag_manager_mod, only: register_diag_field, send_data
 
@@ -103,26 +110,27 @@ integer ::  radiation_counter
 contains
 
 !=====================================================================
-subroutine simple_rad_driver ( is, js, lon, lat, dt, Time,                &
+subroutine simple_rad_driver ( is, js, id, jd, kd, ntp, lon, lat, dt, Time,                &
                                p_half, p_full, tsfc, albedo, sfc_emiss,   &
                                t, r, tdt, rdt, swfsfc, lwfsfc, cosz )             
 !  driver subroutine for simple radiation
 !=======================================================
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, id, jd, kd, ntp
 real,    intent(in)  :: dt
 type(time_type), intent(in)             :: Time
-real, intent(in),    dimension(:,:)     :: lon
-real, intent(in),    dimension(:,:)     :: lat
-real, intent(in),    dimension(:,:,:)   :: p_half, p_full
-real, intent(in),    dimension(:,:)     :: tsfc
-real, intent(in),    dimension(:,:)     :: albedo
-real, intent(in),    dimension(:,:)     :: sfc_emiss
-real, intent(in),    dimension(:,:,:)   :: t
-real, intent(in),    dimension(:,:,:,:) :: r
-real, intent(inout), dimension(:,:,:,:) :: rdt
-real, intent(inout), dimension(:,:,:)   :: tdt
-real, intent(out),   dimension(:,:)     :: swfsfc, lwfsfc  
-real, intent(out),   dimension(:,:)     :: cosz  
+real, intent(in),    dimension(id,jd)     :: lon
+real, intent(in),    dimension(id,jd)     :: lat
+real, intent(in),    dimension(id,jd,kd+1)   :: p_half
+real, intent(in),    dimension(id,jd,kd)   :: p_full
+real, intent(in),    dimension(id,jd)     :: tsfc
+real, intent(in),    dimension(id,jd)     :: albedo
+real, intent(in),    dimension(id,jd)     :: sfc_emiss
+real, intent(in),    dimension(id,jd,kd)   :: t
+real, intent(in),    dimension(id,jd,kd,ntp) :: r
+real, intent(inout), dimension(id,jd,kd,ntp) :: rdt
+real, intent(inout), dimension(id,jd,kd)   :: tdt
+real, intent(out),   dimension(id,jd)     :: swfsfc, lwfsfc  
+real, intent(out),   dimension(id,jd)     :: cosz  
 
 ! Local Variables
 
@@ -144,7 +152,7 @@ real :: rsolar, fact
 real :: secs, sols                                                          
 
 integer :: days, seconds
-integer :: ie, je, id, jd, kd, ntrace
+integer :: ie, je
 integer :: i, j, k, idjd
 
 real :: ramp, tlen, xbar, psr, psi, psr2, psi2, rnorm   
@@ -156,8 +164,6 @@ real, dimension(size(t,1),size(t,2)) :: plog, damp
 
 
 mcpu0 = (mpp_pe() == mpp_root_pe()) 
-
-id= size(t,1); jd= size(t,2); kd= size(t,3);  ntrace= size(r,4)
 
 ie= is + id - 1 
 je= js + jd - 1 
@@ -353,24 +359,23 @@ end subroutine simple_rad_driver
 
 
 
-subroutine simple_rad_driver_init ( nlon, mlat, nlevels, lonb, latb, lon, lat, axes, Time )   
+subroutine simple_rad_driver_init ( nlon, mlat, id, jd, nlevels, lonb, latb, lon, lat, axes, Time )   
 !  initialize simple radiation
 !=======================================================================
 
 
-integer, intent(in)                    :: nlon, mlat, nlevels
-real,    intent(in),  dimension(:,:)   :: lonb, latb
-real,    intent(in),  dimension(:,:)   :: lon , lat
+integer, intent(in)                    :: nlon, mlat, id, jd, nlevels
+real,    intent(in),  dimension(id+1,jd+1)   :: lonb, latb
+real,    intent(in),  dimension(id,jd)   :: lon , lat
 integer, intent(in) :: axes(4)
 type(time_type), intent(in) :: Time
 
 integer :: unit, io, ierr
-integer :: i, j, ie, je, id, jd, is, js 
+integer :: i, j, ie, je, is, js 
 
 character (len=128) :: filename, fieldname
+type(FmsNetcdfFile_t) :: fileobj
 
-
-id= size(lonb,1)-1; jd= size(latb,2)-1
 
 is= 1;   js= 1;
 ie= is + id - 1 
@@ -380,17 +385,11 @@ mcpu0 = (mpp_pe() == mpp_root_pe())
 
 radiation_counter= 0
 
-!     ----- read namelist -----
-
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1
-    do while (ierr /= 0)
-        read  (unit, nml=simple_rad_driver_nml, iostat=io, end=20)
-        ierr = check_nml_error (io, 'simple_rad_driver_nml')
-    enddo
-20    call close_file (unit)
-endif
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=simple_rad_driver_nml, iostat=io)
+ierr = check_nml_error(io,'simple_rad_driver_nml')
 
 !     ----- write version info and namelist to log file -----
 
@@ -405,11 +404,12 @@ allocate ( sfc_lw_flux(is:ie,js:je)  )
 
 !       Get heating rates and surface fluxes from radiation restart file 
 filename= 'INPUT/radiation.res.nc' 
-if (file_exists( trim( filename ) ) ) then
+if( open_file(fileobj, trim(filename), 'read')) then
     if(mcpu0) print *,'Reading  restart file:   ',  trim( filename )
-    call read_data( trim( filename ), 'heatrate'   , heatrate)
-    call read_data( trim( filename ), 'sfc_sw_flux', sfc_sw_flux)
-    call read_data( trim( filename ), 'sfc_lw_flux', sfc_lw_flux)
+    call read_data( fileobj, 'heatrate'   , heatrate)
+    call read_data( fileobj, 'sfc_sw_flux', sfc_sw_flux)
+    call read_data( fileobj, 'sfc_lw_flux', sfc_lw_flux)
+    call close_file(fileobj)
 else
     heatrate= 0.0
     sfc_sw_flux= 0.0

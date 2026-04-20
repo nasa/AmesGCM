@@ -4,12 +4,18 @@ module micromod_mgcm
 !
 use constants_mod, only: grav,cp_air,rdgas,pi,kbz=>kboltz
 use initracer_mod
-use fms_mod, only: error_mesg, FATAL,                      &
-           open_namelist_file, check_nml_error,                &
-           mpp_pe, mpp_root_pe, close_file,                    &
-           write_version_number, stdlog,                       &
-           uppercase, read_data, write_data, field_size
-use fms2_io_mod,            only:  file_exists
+use   mpp_mod, only: input_nml_file
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
 use time_manager_mod, only: time_type, get_time
 use diag_manager_mod, only: register_diag_field, send_data,  diag_axis_init
 use dust_update_mod
@@ -58,7 +64,7 @@ contains
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-subroutine micro_driver(is,js,Time,p_half,p_full,t,tdt, &
+subroutine micro_driver(is,js,ie,je,kd,ntp,Time,p_half,p_full,t,tdt, &
          r,rdt,strss,tg,dtime,drg,rdt_micro,tdt_micro,checkcons)
 !
 ! Main driver for moment microphysics 
@@ -80,25 +86,25 @@ implicit none
 !===============================================================
 !     Input Arguments 
 !===============================================================
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, ie, je, kd, ntp
 type(time_type), intent(in)             :: Time !     Model time
-real*8, intent(in), dimension(:,:,:) :: p_half  !     layer boundary pressures [Pa]
-real*8, intent(in), dimension(:,:,:) :: p_full  !     layer midpoint pressures [Pa]
-real*8, intent(in), dimension(:,:,:) :: t       !     Temperature [K]
-real*8, intent(in), dimension(:,:,:,:) :: r     !     Tracer field
-real*8, intent(in), dimension(:,:) :: strss     !     Surface Stress
-real*8, intent(in), dimension(:,:) :: drg       !     Drag
+real*8, intent(in), dimension(is:ie,js:je,kd+1) :: p_half  !     layer boundary pressures [Pa]
+real*8, intent(in), dimension(is:ie,js:je,kd) :: p_full  !     layer midpoint pressures [Pa]
+real*8, intent(in), dimension(is:ie,js:je,kd) :: t       !     Temperature [K]
+real*8, intent(in), dimension(is:ie,js:je,kd,ntp) :: r     !     Tracer field
+real*8, intent(in), dimension(is:ie,js:je) :: strss     !     Surface Stress
+real*8, intent(in), dimension(is:ie,js:je) :: drg       !     Drag
 
-real*8, intent(in), dimension(:,:) :: tg        !     Ground Temperature (K)
+real*8, intent(in), dimension(is:ie,js:je) :: tg        !     Ground Temperature (K)
 real*8, intent(in) :: dtime                     !     Time step
-real*8, intent(in), dimension(:,:,:,:) :: rdt   !     Tracer tendencies (kg/kg/s)
-real*8, intent(in), dimension(:,:,:) :: tdt     !     Temperature tendencies (K/s)
+real*8, intent(in), dimension(is:ie,js:je,kd,ntp) :: rdt   !     Tracer tendencies (kg/kg/s)
+real*8, intent(in), dimension(is:ie,js:je,kd) :: tdt     !     Temperature tendencies (K/s)
 logical, intent(in) :: checkcons                !     check conservation
 !===============================================================
 !     Output Arguments
 !===============================================================
-real*8, intent(out), dimension(:,:,:,:) :: rdt_micro
-real*8, intent(out), dimension(:,:,:) :: tdt_micro
+real*8, intent(out), dimension(is:ie,js:je,kd,ntp) :: rdt_micro
+real*8, intent(out), dimension(is:ie,js:je,kd) :: tdt_micro
 !===============================================================
 !===============================================================
 !     Local Variables To Microphys
@@ -106,7 +112,7 @@ real*8, intent(out), dimension(:,:,:) :: tdt_micro
 real*8, dimension(size(t,1),size(t,2),nice_mass) :: taucld
 integer n, nt, ndx, microstep, ndx_ma,ndx_nb,ndx_cor,ndx_vap !,nma_dst,nnb_dst
 integer, dimension(1) :: locma,locnb
-integer  :: ie, je, id, jd, i, j, k, l,ilay 
+integer  :: id, jd, i, j, k, l,ilay 
 real*8 Rn,Rs,cst,cst2
 logical :: used
 ! for microphysics time sampling :
@@ -160,8 +166,6 @@ logical :: multi_modes = .false.
 ! *******************************************************************************     
 mcpu0 = (mpp_pe() == mpp_root_pe())
 id= size(tl,1); jd= size(tl,2) 
-ie= is + id - 1
-je= js + jd - 1
 ! Original Vertical Levels
 nz = size(t,3)
 
@@ -1357,18 +1361,12 @@ jd= size(lat,2)
 ie= is + id - 1
 je= js + jd - 1
 
-! *********************************************************
-!     ----- read namelist /_nml/   -----
-! *********************************************************
 
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1; do while (ierr /= 0)
-        read  (unit, nml=microphys_nml, iostat=io, end=10)
-        ierr = check_nml_error (io, 'microphys_nml')
-    enddo
-10     call close_file (unit)
-endif
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=microphys_nml, iostat=io)
+ierr = check_nml_error(io,'microphys_nml')
 
 if (mpp_pe() == mpp_root_pe()) write (stdlog(),nml=microphys_nml)
 

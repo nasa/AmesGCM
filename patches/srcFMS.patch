@@ -1,28 +1,26 @@
 diff --git a/astronomy/astronomy.F90 b/astronomy/astronomy.F90
-index e8366c37..3c4f2cf6 100644
+index 7bcce62d..150f7ccb 100644
 --- a/astronomy/astronomy.F90
 +++ b/astronomy/astronomy.F90
-@@ -33,6 +33,8 @@
- module astronomy_mod
+@@ -41,7 +41,7 @@ module astronomy_mod
+                                  operator(-), operator(+), &
+                                  operator( // ), operator(<)
+     use fms_io_utils_mod,       only: get_data_type_string
+-    use constants_mod,     only: constants_init, PI
++    use constants_mod,     only: constants_init, PI, RADIAN, seconds_per_day
+     use mpp_mod,           only: input_nml_file
+     use platform_mod,      only: r4_kind, r8_kind, i4_kind, i8_kind
  
+@@ -67,6 +67,8 @@ module astronomy_mod
+                   diurnal_solar, daily_mean_solar, annual_mean_solar,  &
+                   astronomy_end, universal_time, orbital_time
  
-+use constants_mod, only: PI, RADIAN, seconds_per_day
-+use diag_manager_mod, only: register_diag_field, send_data
- use fms_mod,           only: fms_init, &
-                              mpp_pe, mpp_root_pe, stdlog, &
-                              write_version_number, &
-@@ -69,6 +71,10 @@ public       &
-               diurnal_solar, daily_mean_solar, annual_mean_solar,  &
-               astronomy_end, universal_time, orbital_time
- 
-+public ::  mars_calender, sol88, zenith, solar_constant
++    public ::  mars_calender, sol88, zenith, solar_constant
 +
-+
-+
- !> @}
- 
- !> @brief Calculates solar information for the given location(lat & lon) and time
-@@ -349,6 +355,27 @@ namelist /astronomy_nml/ ecc, obliq, per, period, &
+     interface set_orbital_parameters
+       module procedure set_orbital_parameters_r4, set_orbital_parameters_r8
+     end interface set_orbital_parameters
+@@ -373,6 +375,27 @@ namelist /astronomy_nml/ ecc, obliq, per, period, &
                           year_ae, month_ae,  day_ae,         &
                           hour_ae, minute_ae, second_ae, &
                           num_angles
@@ -50,28 +48,26 @@ index e8366c37..3c4f2cf6 100644
  
  !--------------------------------------------------------------------
  !------   public data ----------
-@@ -368,8 +395,9 @@ real, dimension(:), allocatable :: orb_angle !< table of orbital positions (0 to
-                                              !! 2*pi) as a function of time  used
+@@ -393,7 +416,7 @@ real(r8_kind), dimension(:), allocatable :: orb_angle !< table of orbital positi
                                               !! to find actual orbital position
                                               !! via interpolation
--
-+#ifndef MARS_GCM
- real    :: seconds_per_day=86400.   !< seconds in a day
-+#endif
- real    :: deg_to_rad               !< conversion from degrees to radians
- real    :: twopi                    !< 2 *PI
- logical :: module_is_initialized=.false. !< has the module been initialized ?
-@@ -427,6 +455,7 @@ integer :: unit, ierr, io, seconds, days, jd, id
-       call time_manager_init
-       call constants_init
+ 
+-real(r8_kind)    :: seconds_per_day = 86400.0_r8_kind !< seconds in a day
++!real(r8_kind)    :: seconds_per_day = 86400.0_r8_kind !< seconds in a day
+ real(r8_kind)    :: deg_to_rad                        !< conversion from degrees to radians
+ real(r8_kind)    :: twopi                             !< 2 *PI
+ logical          :: module_is_initialized=.false.     !< has the module been initialized ?
+@@ -453,6 +476,7 @@ character(len=17) :: err_str
+     call time_manager_init
+     call constants_init
  
 +#ifndef MARS_GCM
  !-----------------------------------------------------------------------
  !>    Read namelist.
  !-----------------------------------------------------------------------
-@@ -499,6 +528,22 @@ integer :: unit, ierr, io, seconds, days, jd, id
-         total_pts = jd*id
-       endif
+@@ -554,6 +578,22 @@ character(len=17) :: err_str
+        call error_mesg ('astronomy_mod', 'lat and lon must both be present', FATAL)
+     endif
  
 +
 +#else
@@ -85,16 +81,16 @@ index e8366c37..3c4f2cf6 100644
 +!---------------------------------------------------------------------
 +      call write_version_number("ASTRONOMY_MOD", version)
 +      if (mpp_pe() == mpp_root_pe() ) then
-+        unit = stdlog()
-+        write (unit, nml=orbital_data_nml)
++        iunit = stdlog()
++        write (iunit, nml=orbital_data_nml)
 +      endif
 +#endif
  !---------------------------------------------------------------------
  !>    Mark the module as initialized.
  !---------------------------------------------------------------------
-@@ -2242,6 +2287,353 @@ real                        :: t
- 
- end function universal_time
+@@ -865,6 +905,353 @@ end function universal_time
+ #include "astronomy_r4.fh"
+ #include "astronomy_r8.fh"
  
 +#ifdef MARS_GCM
 +subroutine mars_calender( jld, fjd, r_orbit, dlt, areo )
@@ -446,77 +442,60 @@ index e8366c37..3c4f2cf6 100644
  end module astronomy_mod
  !> @}
  ! close documentation grouping
-diff --git a/constants/constants.F90 b/constants/constants.F90
-index 008321a6..dc5a9b83 100644
---- a/constants/constants.F90
-+++ b/constants/constants.F90
-@@ -99,22 +99,39 @@ real,               public, parameter :: TFREEZE = 273.15_r8_kind     !< Freezin
+diff --git a/constants/fmsconstants.F90 b/constants/fmsconstants.F90
+index 6734f881..e792662a 100644
+--- a/constants/fmsconstants.F90
++++ b/constants/fmsconstants.F90
+@@ -64,7 +64,7 @@ module FMSconstants
+ #define RKIND sizeof(dum)
  
+ !--- set a default for the FMSConstants
+-#if !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && !defined(GEOS_CONSTANTS)
++#if !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && !defined(GEOS_CONSTANTS) && !defined(MARS_GCM)
+ #define GFDL_CONSTANTS
+ #endif
+ 
+@@ -78,6 +78,9 @@ module FMSconstants
+ #elif !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && defined(GEOS_CONSTANTS)
+ #warning "Using GEOS constants"
+ #include <geos_constants.fh>
++#elif defined(MARS_GCM) && !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && !defined(GEOS_CONSTANTS)
++#warning "Using Mars constants"
++#include <mars_constants.fh>
  #else
- 
+ #error FATAL FMSConstants error -  multiple constants macros are defined for FMS
+ #endif
+diff --git a/constants/mars_constants.fh b/constants/mars_constants.fh
+new file mode 100644
+index 00000000..6cd4ee7b
+--- /dev/null
++++ b/constants/mars_constants.fh
+@@ -0,0 +1,131 @@
++character(len=18), public, parameter :: constants_version = 'FMSConstants: MARS'
 +
-+#ifndef MARS_GCM
- real,         public, parameter :: RADIUS = 6371.0e+3_r8_kind * small_fac   !< Radius of the Earth [m]
--real(kind=8), public, parameter :: PI_8   = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
--real,         public, parameter :: PI     = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
- real,         public, parameter :: OMEGA  = 7.292e-5_r8_kind / small_fac    !< Rotation rate of the Earth [1/s]
- real,         public, parameter :: GRAV   = 9.80_r8_kind             !< Acceleration due to gravity [m/s^2]
- real,         public, parameter :: RDGAS  = 287.04_r8_kind           !< Gas constant for dry air [J/kg/deg]
-+real,         public, parameter :: KAPPA  = 2.0_r8_kind/7.0_r8_kind  !< RDGAS / CP_AIR [dimensionless]
-+real,         public, parameter :: CP_AIR = RDGAS/KAPPA              !< Specific heat capacity of dry air at constant pressure [J/kg/deg]
-+#else
-+!rjw  real, public, parameter :: RADIUS = 3386.0e3
-+!rjw  real, public, parameter :: OMEGA  = 7.0882e-5
++!--- temporary definition for backwards compatibility
++real(kind=RKIND), public, parameter :: small_fac = 1._r8_kind
++
++!--- Spherical coordinate conversion constants
++real(kind=r8_kind), public, parameter :: PI_8 = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to
++                                                                                !! diameter [N/A]
++real(kind=RKIND),   public, parameter :: PI   = PI_8                            !< Ratio of circle circumference to
++                                                                                !! diameter [N/A]
++real(kind=RKIND),   public, parameter :: RAD_TO_DEG  = 180._r8_kind/PI_8        !< Degrees per radian [deg/rad]
++real(kind=RKIND),   public, parameter :: DEG_TO_RAD  = PI_8/180._r8_kind        !< Radians per degree [rad/deg]
++real(kind=RKIND),   public, parameter :: RADIAN      = RAD_TO_DEG               !< Equal to RAD_TO_DEG for backward
++                                                                                !! compatability. [rad/deg]
++
++!--- Mars physical constants
 +real, public, parameter :: GRAV   = 3.72_r8_kind
-+!real, public, parameter :: RDGAS  = 191.00
-+!real, public, parameter :: CP_AIR = 744.5 !737.0
++!real, public, parameter :: RDGAS  = 191.00_r8_kind
++!real, public, parameter :: CP_AIR = 744.5_r8_kind !737.0
 +real, public, parameter :: RDGAS  = 189.02_r8_kind
 +real, public, parameter :: CP_AIR = 735.94_r8_kind
 +real, public, parameter :: KAPPA  = RDGAS/CP_AIR
 +real, public, parameter :: RADIUS = 3386.0e3_r8_kind * small_fac
 +real, public, parameter :: OMEGA  = 7.0882e-5_r8_kind / small_fac
 +
-+
-+#endif
-+real(kind=8), public, parameter :: PI_8   = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
-+real,         public, parameter :: PI     = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to diameter [N/A]
- real,         public, parameter :: RVGAS  = 461.50_r8_kind           !< Gas constant for water vapor [J/kg/deg]
- ! Extra:
- real,         public, parameter :: HLV = 2.500e6_r8_kind             !< Latent heat of evaporation [J/kg]
- real,         public, parameter :: HLF = 3.34e5_r8_kind              !< Latent heat of fusion [J/kg]
--real,         public, parameter :: KAPPA  = 2.0_r8_kind/7.0_r8_kind  !< RDGAS / CP_AIR [dimensionless]
--real,         public, parameter :: CP_AIR = RDGAS/KAPPA              !< Specific heat capacity of dry air at constant pressure [J/kg/deg]
- real,         public, parameter :: TFREEZE = 273.16_r8_kind          !< Freezing temperature of fresh water [K]
- #endif
- 
--real, public, parameter :: STEFAN  = 5.6734e-8_r8_kind !< Stefan-Boltzmann constant [W/m^2/deg^4]
-+real, public, parameter :: KBOLTZ = 1.38064852e-23 ! m^2 kg s^-2 K^-1 Boltzmann Constant
-+real, public, parameter :: STEFAN  = 5.6703744e-8_r8_kind !< Stefan-Boltzmann constant [W/m^2/deg^4]
- 
- real, public, parameter :: CP_VAPOR = 4.0_r8_kind*RVGAS      !< Specific heat capacity of water vapor at constant pressure [J/kg/deg]
- real, public, parameter :: CP_OCEAN = 3989.24495292815_r8_kind !< Specific heat capacity taken from McDougall (2002)
-@@ -128,7 +145,11 @@ real, public, parameter :: ES0 = 1.0_r8_kind        !< Humidity factor. Controls
- real, public, parameter :: DENS_H2O = 1000._r8_kind !< Density of liquid water [kg/m^3]
- real, public, parameter :: HLS = HLV + HLF          !< Latent heat of sublimation [J/kg]
- 
-+#ifdef MARS_GCM
-+real, public, parameter :: WTMAIR = 4.349E+01_r8_kind
-+#else
- real, public, parameter :: WTMAIR   = 2.896440E+01_r8_kind   !< Molecular weight of air [AMU]
-+#endif MARS_GCM
- real, public, parameter :: WTMH2O   = WTMAIR*(RDGAS/RVGAS)   !< Molecular weight of water [AMU]
- real, public, parameter :: WTMOZONE =  47.99820_r8_kind      !< Molecular weight of ozone [AMU]
- real, public, parameter :: WTMC     =  12.00000_r8_kind      !< Molecular weight of carbon [AMU]
-@@ -140,12 +161,27 @@ real, public, parameter :: WTMCFC12 = 120.9135_r8_kind       !< Molecular weight
- real, public, parameter :: WTMN     =  14.0067_r8_kind       !< Molecular weight of Nitrogen [AMU]
- real, public, parameter :: DIFFAC   = 1.660000E+00_r8_kind   !< Diffusivity factor [dimensionless]
- real, public, parameter :: AVOGNO   = 6.023000E+23_r8_kind   !< Avogadro's number [atoms/mole]
-+#ifndef MARS_GCM
- real, public, parameter :: PSTD     = 1.013250E+06_r8_kind   !< Mean sea level pressure [dynes/cm^2]
- real, public, parameter :: PSTD_MKS = 101325.0_r8_kind       !< Mean sea level pressure [N/m^2]
-+#endif
- 
-+#ifdef MARS_GCM
 +#ifdef SECDAY86400
 +real, public, parameter :: SECONDS_PER_DAY    = 8.640000E+04_r8_kind !< Seconds in a day [s]
 +real, public, parameter :: SECONDS_PER_HOUR   = 3600._r8_kind        !< Seconds in an hour [s]
@@ -527,19 +506,75 @@ index 008321a6..dc5a9b83 100644
 +real, public, parameter :: SECONDS_PER_MINUTE = 61.6_r8_kind          !< Seconds in a minute [s]
 +#endif SECDAY86400
 +
-+#else
- real, public, parameter :: SECONDS_PER_DAY    = 8.640000E+04_r8_kind !< Seconds in a day [s]
- real, public, parameter :: SECONDS_PER_HOUR   = 3600._r8_kind        !< Seconds in an hour [s]
- real, public, parameter :: SECONDS_PER_MINUTE = 60._r8_kind          !< Seconds in a minute [s]
-+#endif MARS_GCM
- real, public, parameter :: RAD_TO_DEG         = 180._r8_kind/PI      !< Degrees per radian [deg/rad]
- real, public, parameter :: DEG_TO_RAD         = PI/180._r8_kind      !< Radians per degree [rad/deg]
- real, public, parameter :: RADIAN             = RAD_TO_DEG           !< Equal to RAD_TO_DEG for backward compatability. [rad/deg]
-@@ -162,6 +198,36 @@ real, public, parameter :: VONKARM     = 0.40_r8_kind       !< Von Karman consta
- real, public, parameter :: C2DBARS     = 1.e-4_r8_kind      !< Converts rho*g*z (in mks) to dbars: 1dbar = 10^4 (kg/m^3)(m/s^2)m [dbars]
- real, public, parameter :: KELVIN      = 273.15_r8_kind     !< Degrees Kelvin at zero Celsius [K]
- 
-+#ifdef MARS_GCM
++!--- Various gas constants
++real(kind=RKIND), public, parameter :: RVGAS    = 461.50_r8_kind            !< Gas constant for water vapor
++                                                                            !! [J/kg/deg]
++real(kind=RKIND), public, parameter :: HLV      = 2.500E6_r8_kind           !< Latent heat of evaporation [J/kg]
++real(kind=RKIND), public, parameter :: HLF      = 3.34E5_r8_kind            !< Latent heat of fusion [J/kg]
++real(kind=RKIND), public, parameter :: HLS      = HLV + HLF                 !< Latent heat of sublimation [J/kg]
++real(kind=RKIND), public, parameter :: CP_VAPOR = 4.0_r8_kind*RVGAS         !< Specific heat capacity of water vapor
++                                                                            !! at constant pressure [J/kg/deg]
++real(kind=RKIND), public, parameter :: CP_OCEAN = 3989.24495292815_r8_kind  !< Specific heat capacity taken
++                                                                            !! from McDougall (2002)
++                                                                            !! "Potential Enthalpy ..." [J/kg/deg]
++real(kind=RKIND), public, parameter :: DENS_H2O = 1000._r8_kind             !< Density of liquid water [kg/m^3]
++real(kind=RKIND), public, parameter :: RHOAIR   = 1.292269_r8_kind          !< Reference atmospheric density [kg/m^3]
++real(kind=RKIND), public, parameter :: RHO0     = 1.035E3_r8_kind           !< Average density of sea water [kg/m^3]
++real(kind=RKIND), public, parameter :: RHO0R    = 1.0_r8_kind/RHO0          !< Reciprocal of average density of
++                                                                            !! sea water [m^3/kg]
++real(kind=RKIND), public, parameter :: RHO_CP   = RHO0*CP_OCEAN             !< (kg/m^3)*(cal/kg/deg C)(joules/cal) =
++                                                                            !! (joules/m^3/deg C) [J/m^3/deg]
++real(kind=RKIND), public, parameter :: O2MIXRAT = 2.0953E-01_r8_kind        !< Mixing ratio of molecular oxygen
++                                                                            !! in air [dimensionless]
++real(kind=RKIND), public, parameter :: WTMAIR   = 2.896440E+01_r8_kind      !< Molecular weight of air [AMU]
++real(kind=RKIND), public, parameter :: WTMH2O   = WTMAIR*(RDGAS/RVGAS)      !< Molecular weight of water [AMU]
++real(kind=RKIND), public, parameter :: WTMOZONE =  47.99820_r8_kind         !< Molecular weight of ozone [AMU]
++real(kind=RKIND), public, parameter :: WTMC     =  12.00000_r8_kind         !< Molecular weight of carbon [AMU]
++real(kind=RKIND), public, parameter :: WTMCO2   =  44.00995_r8_kind         !< Molecular weight of carbon dioxide
++                                                                            !! [AMU]
++real(kind=RKIND), public, parameter :: WTMCH4   =  16.0425_r8_kind          !< Molecular weight of methane [AMU]
++real(kind=RKIND), public, parameter :: WTMO2    =  31.9988_r8_kind          !< Molecular weight of molecular
++                                                                            !! oxygen [AMU]
++real(kind=RKIND), public, parameter :: WTMCFC11 = 137.3681_r8_kind          !< Molecular weight of CFC-11
++                                                                            !! (CCl3F) [AMU]
++real(kind=RKIND), public, parameter :: WTMCFC12 = 120.9135_r8_kind          !< Molecular weight of CFC-21
++                                                                            !! (CCl2F2) [AMU]
++real(kind=RKIND), public, parameter :: WTMN     =  14.0067_r8_kind          !< Molecular weight of Nitrogen [AMU]
++real(kind=RKIND), public, parameter :: DIFFAC   = 1.660_r8_kind             !< Diffusivity factor [dimensionless]
++real(kind=RKIND), public, parameter :: ES0      = 1.0_r8_kind               !< Humidity factor [dimensionless]
++                                                                            !! Controls the humidity content of
++                                                                            !! the atmosphere through
++                                                                            !! the Saturation Vapour Pressure
++                                                                            !! expression when using DO_SIMPLE
++
++!--- Pressure and Temperature constants
++real(kind=RKIND), public, parameter :: PSTD     = 1.013250E+06_r8_kind      !< Mean sea level pressure [dynes/cm^2]
++real(kind=RKIND), public, parameter :: PSTD_MKS = 101325.0_r8_kind          !< Mean sea level pressure [N/m^2]
++real(kind=RKIND), public, parameter :: KELVIN   = 273.15_r8_kind            !< Degrees Kelvin at zero Celsius [K]
++real(kind=RKIND), public, parameter :: TFREEZE  = 273.16_r8_kind            !< Freezing temperature of fresh water [K]
++real(kind=RKIND), public, parameter :: C2DBARS  = 1.E-4_r8_kind             !< Converts rho*g*z (in mks) to dbars:
++                                                                            !! 1dbar = 10^4 (kg/m^3)(m/s^2)m [dbars]
++
++!--- Named constants
++real(kind=RKIND), public, parameter :: KBOLTZ = 1.38064852e-23_r8_kind      ! m^2 kg s^-2 K^-1 Boltzmann Constant
++real(kind=RKIND), public, parameter :: STEFAN   = 5.6734E-8_r8_kind         !< Stefan-Boltzmann constant [W/m^2/deg^4]
++real(kind=RKIND), public, parameter :: AVOGNO   = 6.023000E+23_r8_kind      !< Avogadro's number [atoms/mole]
++real(kind=RKIND), public, parameter :: VONKARM  = 0.40_r8_kind              !< Von Karman constant [dimensionless]
++
++!--- Miscellaneous constants
++real(kind=RKIND), public, parameter :: ALOGMIN    = -50.0_r8_kind        !< Minimum value allowed as argument
++                                                                         !! to log function [N/A]
++real(kind=RKIND), public, parameter :: EPSLN      = 1.0E-40_r8_kind      !< A small number to prevent
++                                                                         !! divide by zero exceptions [N/A]
++real(kind=RKIND), public, parameter :: RADCON     = ((1.0E+02*GRAV)/(1.0D+04*CP_AIR))*SECONDS_PER_DAY !< Factor to
++                                                                        !! convert flux divergence
++                                                                        !! to heating rate in degrees per day
++                                                                        !! [deg sec/(cm day)]
++real(kind=RKIND), public, parameter :: RADCON_MKS = (GRAV/CP_AIR)*SECONDS_PER_DAY !< Factor to
++                                                                        !! convert flux divergence
++                                                                        !! to heating rate in degrees per day
++                                                                        !! [deg sec/(m day)]
++
 +!             Additional Mars constants
 +
 +real, public, parameter  :: co2_lheat= 5.90e5   !  Latent heat of fusion:  joules / kg
@@ -567,56 +602,211 @@ index 008321a6..dc5a9b83 100644
 +!!   real :: rhoice  = 0.9E03      This is currently used in dust_source_sink
 +!                                        and radiation_driver.F90
 +!
-+#endif MARS_GCM
-+
- public :: constants_init
+diff --git a/constants4/fmsconstantsr4.F90 b/constants4/fmsconstantsr4.F90
+index fd80cc06..cb6f5458 100644
+--- a/constants4/fmsconstantsr4.F90
++++ b/constants4/fmsconstantsr4.F90
+@@ -61,7 +61,7 @@ module FMSconstantsR4
+ #define RKIND r4_kind
  
- contains
+ !--- set a default for the FMSConstantsR4
+-#if !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && !defined(GEOS_CONSTANTS)
++#if !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && !defined(GEOS_CONSTANTS) && !defined(MARS_GCM)
+ #define GFDL_CONSTANTS
+ #endif
+ 
+@@ -75,6 +75,9 @@ module FMSconstantsR4
+ #elif !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && defined(GEOS_CONSTANTS)
+ #warning "Using GEOS constantsR4"
+ #include <geos_constantsR4.fh>
++#elif defined(MARS_GCM) && !defined(GFDL_CONSTANTS) && !defined(GFS_CONSTANTS) && !defined(GEOS_CONSTANTS)
++#warning "Using Mars constants"
++#include <mars_constantsR4.fh>
+ #else
+ #error FATAL FMSConstantsR4 error -  multiple constants macros are defined for FMS
+ #endif
+diff --git a/constants4/mars_constantsR4.fh b/constants4/mars_constantsR4.fh
+new file mode 100644
+index 00000000..66d19bd5
+--- /dev/null
++++ b/constants4/mars_constantsR4.fh
+@@ -0,0 +1,131 @@
++character(len=18), public, parameter :: constantsR4_version = 'FMSConstantsR4: MARS'
++
++!--- temporary definition for backwards compatibility
++real(kind=RKIND), public, parameter :: small_fac = 1._r8_kind
++
++!--- Spherical coordinate conversion constants
++real(kind=r8_kind), public, parameter :: PI_8 = 3.14159265358979323846_r8_kind  !< Ratio of circle circumference to
++                                                                                !! diameter [N/A]
++real(kind=RKIND),   public, parameter :: PI   = PI_8                            !< Ratio of circle circumference to
++                                                                                !! diameter [N/A]
++real(kind=RKIND),   public, parameter :: RAD_TO_DEG  = 180._r8_kind/PI_8        !< Degrees per radian [deg/rad]
++real(kind=RKIND),   public, parameter :: DEG_TO_RAD  = PI_8/180._r8_kind        !< Radians per degree [rad/deg]
++real(kind=RKIND),   public, parameter :: RADIAN      = RAD_TO_DEG               !< Equal to RAD_TO_DEG for backward
++                                                                                !! compatability. [rad/deg]
++
++!--- Mars physical constants
++real, public, parameter :: GRAV   = 3.72_r8_kind
++!real, public, parameter :: RDGAS  = 191.00_r8_kind
++!real, public, parameter :: CP_AIR = 744.5_r8_kind !737.0
++real, public, parameter :: RDGAS  = 189.02_r8_kind
++real, public, parameter :: CP_AIR = 735.94_r8_kind
++real, public, parameter :: KAPPA  = RDGAS/CP_AIR
++real, public, parameter :: RADIUS = 3386.0e3_r8_kind * small_fac
++real, public, parameter :: OMEGA  = 7.0882e-5_r8_kind / small_fac
++
++#ifdef SECDAY86400
++real, public, parameter :: SECONDS_PER_DAY    = 8.640000E+04_r8_kind !< Seconds in a day [s]
++real, public, parameter :: SECONDS_PER_HOUR   = 3600._r8_kind        !< Seconds in an hour [s]
++real, public, parameter :: SECONDS_PER_MINUTE = 60._r8_kind          !< Seconds in a minute [s]
++#else
++real, public, parameter :: SECONDS_PER_DAY    = 8.870400E+04_r8_kind !< Seconds in a day [s]
++real, public, parameter :: SECONDS_PER_HOUR   = 3696._r8_kind        !< Seconds in an hour [s]
++real, public, parameter :: SECONDS_PER_MINUTE = 61.6_r8_kind          !< Seconds in a minute [s]
++#endif SECDAY86400
++
++!--- Various gas constants
++real(kind=RKIND), public, parameter :: RVGAS    = 461.50_r8_kind            !< Gas constant for water vapor
++                                                                            !! [J/kg/deg]
++real(kind=RKIND), public, parameter :: HLV      = 2.500E6_r8_kind           !< Latent heat of evaporation [J/kg]
++real(kind=RKIND), public, parameter :: HLF      = 3.34E5_r8_kind            !< Latent heat of fusion [J/kg]
++real(kind=RKIND), public, parameter :: HLS      = HLV + HLF                 !< Latent heat of sublimation [J/kg]
++real(kind=RKIND), public, parameter :: CP_VAPOR = 4.0_r8_kind*RVGAS         !< Specific heat capacity of water vapor
++                                                                            !! at constant pressure [J/kg/deg]
++real(kind=RKIND), public, parameter :: CP_OCEAN = 3989.24495292815_r8_kind  !< Specific heat capacity taken
++                                                                            !! from McDougall (2002)
++                                                                            !! "Potential Enthalpy ..." [J/kg/deg]
++real(kind=RKIND), public, parameter :: DENS_H2O = 1000._r8_kind             !< Density of liquid water [kg/m^3]
++real(kind=RKIND), public, parameter :: RHOAIR   = 1.292269_r8_kind          !< Reference atmospheric density [kg/m^3]
++real(kind=RKIND), public, parameter :: RHO0     = 1.035E3_r8_kind           !< Average density of sea water [kg/m^3]
++real(kind=RKIND), public, parameter :: RHO0R    = 1.0_r8_kind/RHO0          !< Reciprocal of average density of
++                                                                            !! sea water [m^3/kg]
++real(kind=RKIND), public, parameter :: RHO_CP   = RHO0*CP_OCEAN             !< (kg/m^3)*(cal/kg/deg C)(joules/cal) =
++                                                                            !! (joules/m^3/deg C) [J/m^3/deg]
++real(kind=RKIND), public, parameter :: O2MIXRAT = 2.0953E-01_r8_kind        !< Mixing ratio of molecular oxygen
++                                                                            !! in air [dimensionless]
++real(kind=RKIND), public, parameter :: WTMAIR   = 2.896440E+01_r8_kind      !< Molecular weight of air [AMU]
++real(kind=RKIND), public, parameter :: WTMH2O   = WTMAIR*(RDGAS/RVGAS)      !< Molecular weight of water [AMU]
++real(kind=RKIND), public, parameter :: WTMOZONE =  47.99820_r8_kind         !< Molecular weight of ozone [AMU]
++real(kind=RKIND), public, parameter :: WTMC     =  12.00000_r8_kind         !< Molecular weight of carbon [AMU]
++real(kind=RKIND), public, parameter :: WTMCO2   =  44.00995_r8_kind         !< Molecular weight of carbon dioxide
++                                                                            !! [AMU]
++real(kind=RKIND), public, parameter :: WTMCH4   =  16.0425_r8_kind          !< Molecular weight of methane [AMU]
++real(kind=RKIND), public, parameter :: WTMO2    =  31.9988_r8_kind          !< Molecular weight of molecular
++                                                                            !! oxygen [AMU]
++real(kind=RKIND), public, parameter :: WTMCFC11 = 137.3681_r8_kind          !< Molecular weight of CFC-11
++                                                                            !! (CCl3F) [AMU]
++real(kind=RKIND), public, parameter :: WTMCFC12 = 120.9135_r8_kind          !< Molecular weight of CFC-21
++                                                                            !! (CCl2F2) [AMU]
++real(kind=RKIND), public, parameter :: WTMN     =  14.0067_r8_kind          !< Molecular weight of Nitrogen [AMU]
++real(kind=RKIND), public, parameter :: DIFFAC   = 1.660_r8_kind             !< Diffusivity factor [dimensionless]
++real(kind=RKIND), public, parameter :: ES0      = 1.0_r8_kind               !< Humidity factor [dimensionless]
++                                                                            !! Controls the humidity content of
++                                                                            !! the atmosphere through
++                                                                            !! the Saturation Vapour Pressure
++                                                                            !! expression when using DO_SIMPLE
++
++!--- Pressure and Temperature constants
++real(kind=RKIND), public, parameter :: PSTD     = 1.013250E+06_r8_kind      !< Mean sea level pressure [dynes/cm^2]
++real(kind=RKIND), public, parameter :: PSTD_MKS = 101325.0_r8_kind          !< Mean sea level pressure [N/m^2]
++real(kind=RKIND), public, parameter :: KELVIN   = 273.15_r8_kind            !< Degrees Kelvin at zero Celsius [K]
++real(kind=RKIND), public, parameter :: TFREEZE  = 273.16_r8_kind            !< Freezing temperature of fresh water [K]
++real(kind=RKIND), public, parameter :: C2DBARS  = 1.E-4_r8_kind             !< Converts rho*g*z (in mks) to dbars:
++                                                                            !! 1dbar = 10^4 (kg/m^3)(m/s^2)m [dbars]
++
++!--- Named constants
++real(kind=RKIND), public, parameter :: KBOLTZ = 1.38064852e-23_r8_kind      ! m^2 kg s^-2 K^-1 Boltzmann Constant
++real(kind=RKIND), public, parameter :: STEFAN   = 5.6734E-8_r8_kind         !< Stefan-Boltzmann constant [W/m^2/deg^4]
++real(kind=RKIND), public, parameter :: AVOGNO   = 6.023000E+23_r8_kind      !< Avogadro's number [atoms/mole]
++real(kind=RKIND), public, parameter :: VONKARM  = 0.40_r8_kind              !< Von Karman constant [dimensionless]
++
++!--- Miscellaneous constants
++real(kind=RKIND), public, parameter :: ALOGMIN    = -50.0_r8_kind        !< Minimum value allowed as argument
++                                                                         !! to log function [N/A]
++real(kind=RKIND), public, parameter :: EPSLN      = 1.0E-40_r8_kind      !< A small number to prevent
++                                                                         !! divide by zero exceptions [N/A]
++real(kind=RKIND), public, parameter :: RADCON     = ((1.0E+02*GRAV)/(1.0D+04*CP_AIR))*SECONDS_PER_DAY !< Factor to
++                                                                        !! convert flux divergence
++                                                                        !! to heating rate in degrees per day
++                                                                        !! [deg sec/(cm day)]
++real(kind=RKIND), public, parameter :: RADCON_MKS = (GRAV/CP_AIR)*SECONDS_PER_DAY !< Factor to
++                                                                        !! convert flux divergence
++                                                                        !! to heating rate in degrees per day
++                                                                        !! [deg sec/(m day)]
++
++!             Additional Mars constants
++
++real, public, parameter  :: co2_lheat= 5.90e5   !  Latent heat of fusion:  joules / kg
++
++!       Mars orbital constants are currently found in astronomy.F90
++!  real :: obliquity= 25.19
++!  real :: eccentricity= 0.093
++!  real :: equinox_fraction= 0.269461 !  yields equinox at day 180
++!  real :: days_in_year= 668.0
++!  real :: solar_constant= 589.0      !  W/m**2
++
++!   The thermal capacity of pure water ice might be included here
++!        Currently it is found in Mars_surface_mod  ( subroutine progts )
++
++!       CO2 ice specific heat:  J/kg/K
++!       cp_co2= 349 + 4.8 * ts         (1068 J/kg/K at 150 K)
++
++!
++!   Soil heat capacity and soil density are defined in Mars_surface_mod
++!      real  :: rho_ground= 1.50*1.0E3   !  Soil density:    kg / m**3
++!      real  :: cp_ground= 627.9    !  Soil heat capcity:     joules / kg / K
++!
++!!!      real  :: calerg= 4.1855e7    !  Conversion from caleries to ergs
++
++!!   real :: rhoice  = 0.9E03      This is currently used in dust_source_sink
++!                                        and radiation_driver.F90
++!
 diff --git a/diag_manager/diag_data.F90 b/diag_manager/diag_data.F90
-index 7cd45798..45dbc367 100644
+index 3019e2b8..fbc5f3ee 100644
 --- a/diag_manager/diag_data.F90
 +++ b/diag_manager/diag_data.F90
-@@ -65,7 +65,7 @@ use platform_mod
-   PUBLIC
- 
-   ! Specify storage limits for fixed size tables used for pointers, etc.
+@@ -87,7 +87,7 @@ use platform_mod
+   integer, parameter :: i4 = -4
+   integer, parameter :: string = 19 !< s is the 19th letter of the alphabet
+   integer, parameter :: null_type_int = -999
 -  INTEGER, PARAMETER :: MAX_FIELDS_PER_FILE = 300 !< Maximum number of fields per file.
 +  INTEGER, PARAMETER :: MAX_FIELDS_PER_FILE = 600 !< Maximum number of fields per file.
    INTEGER, PARAMETER :: DIAG_OTHER = 0
    INTEGER, PARAMETER :: DIAG_OCEAN = 1
    INTEGER, PARAMETER :: DIAG_ALL   = 2
-@@ -296,7 +296,7 @@ use platform_mod
+@@ -354,7 +354,7 @@ use platform_mod
    LOGICAL :: append_pelist_name = .FALSE.
    LOGICAL :: mix_snapshot_average_fields =.FALSE.
    INTEGER :: max_files = 31 !< Maximum number of output files allowed.  Increase via diag_manager_nml.
 -  INTEGER :: max_output_fields = 300 !< Maximum number of output fields.  Increase via diag_manager_nml.
 +  INTEGER :: max_output_fields = 600 !< Maximum number of output fields.  Increase via diag_manager_nml.
    INTEGER :: max_input_fields = 600 !< Maximum number of input fields.  Increase via diag_manager_nml.
-   INTEGER :: max_out_per_in_field = 150 !< Maximum number of output_fields per input_field.  Increase via diag_manager_nml.
-   INTEGER :: max_axes = 60 !< Maximum number of independent axes.
+   INTEGER :: max_out_per_in_field = 150 !< Maximum number of output_fields per input_field.  Increase
+                                         !! via diag_manager_nml.
 diff --git a/field_manager/field_manager.F90 b/field_manager/field_manager.F90
-index 141d85cd..633afd65 100644
+index 78bb22e8..dcec09a2 100644
 --- a/field_manager/field_manager.F90
 +++ b/field_manager/field_manager.F90
-@@ -207,6 +207,7 @@ logical            :: module_is_initialized  = .false.
- !+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+@@ -204,6 +204,7 @@ logical            :: module_is_initialized  = .false.
+ 
  public :: field_manager_init   !< (nfields, [table_name]) returns number of fields
  public :: field_manager_end    !< ()
 +public :: find_tagging_index   !< (num newtrac) designed to get the link between initial tracers and tagged new tracers (TB)
  public :: find_field_index     !< (model, field_name) or (list_path)
- public :: find_field_index_old !< (model, field_name) returns index of field_name in
- public :: find_field_index_new
-@@ -468,6 +469,7 @@ character(len=17), parameter :: module_name       = 'field_manager_mod'
- character(len=1),  parameter :: bracket_left      = '['
- character(len=1),  parameter :: bracket_right     = ']'
+ public :: get_field_info       !< (n,fld_type,fld_name,model,num_methods)
+                                !! Returns parameters relating to field n.
+@@ -429,6 +430,7 @@ character(len=32), parameter :: note_header       = '==>Note from '//trim(module
  character(len=1),  parameter :: comma             = ","
+ character(len=1),  parameter :: list_sep          = '/'
+ !TODO these variable can be removed when the legacy table is no longer used
 +character(len=1),  parameter :: semicolon         = ";"
  character(len=1),  parameter :: comment           = '#'
  character(len=1),  parameter :: dquote            = '"'
  character(len=1),  parameter :: equal             = '='
-@@ -502,6 +504,15 @@ type, private :: field_mgr_type !{
-   type(method_type)                                   :: methods(MAX_FIELD_METHODS)
- end type field_mgr_type !}
+@@ -456,6 +458,15 @@ type, private :: field_mgr_type
+   type(method_type), dimension(:), allocatable        :: methods !< methods associated with this field name
+ end type field_mgr_type
  
 +!TB
 +type, private :: tag_mgr_type !{
@@ -627,12 +817,12 @@ index 141d85cd..633afd65 100644
 +  type(method_type)                                   :: methods(MAX_FIELD_METHODS)
 +end type tag_mgr_type !}
 +
+ !TODO These two types: field_names_type and field_names_type_short
+ !! will no longer be needed when the legacy field table is not used
  !> @brief Private type for internal use
- !> @ingroup field_manager_mod
- type, private :: field_names_type !{
-@@ -510,6 +521,13 @@ type, private :: field_names_type !{
-   character(len=fm_string_len)                    :: fld_name
- end  type field_names_type !}
+@@ -466,6 +477,13 @@ type, private :: field_names_type
+   character(len=fm_string_len)                        :: fld_name
+ end  type field_names_type
  
 +!TB
 +type, private :: tag_names_type !{
@@ -643,40 +833,43 @@ index 141d85cd..633afd65 100644
 +
  !> @brief Private type for internal use
  !> @ingroup field_manager_mod
- type, private :: field_names_type_short !{
-@@ -545,6 +563,7 @@ end type field_def  !}
- !+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ type, private :: field_names_type_short
+@@ -497,6 +515,10 @@ end type field_def
+ !> @addtogroup field_manager_mod
+ !> @{
  
- type(field_mgr_type), private :: fields(MAX_FIELDS)
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++!        Private types
++!+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 +type(tag_mgr_type), private :: tags(MAX_FIELDS)
+ type(field_mgr_type), dimension(:), allocatable, private :: fields !< fields of field_mgr_type
  
- !+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- !        Private variables
-@@ -562,10 +581,13 @@ character(len=50)                :: set_nonexp = "ABCDFGHIJKLMNOPQRSTUVWXYZabcdf
+ character(len=FMS_PATH_LEN)  :: loop_list
+@@ -511,6 +533,14 @@ character(len=50)                :: set_nonexp = "ABCDFGHIJKLMNOPQRSTUVWXYZabcdf
  ! the string setnum then the string may be a number.
  character(len=13)                :: setnum     = "0123456789+-."
  integer                          :: num_fields         = 0
 +integer, public                  :: num_tags         = 0   !TB
 +integer                          :: num_newtrac      = 0   !TB total number of new tracers
 +integer                          :: newtrac_array(MAX_FIELDS) ! array containing the number of each tracer associated with newtrac(i)
- integer                          :: verb               = 0
- integer                          :: verb_level_warn    = 0
- integer                          :: verb_level_note    = 0
--integer                          :: default_verbosity  = 0
++integer                          :: verb               = 0
++integer                          :: verb_level_warn    = 0
++integer                          :: verb_level_note    = 0
 +integer                          :: default_verbosity  = 1 ! TB
- integer                          :: max_verbosity      = 1
++integer                          :: max_verbosity      = 1
  type (field_def), pointer        :: loop_list_p        => NULL()
  type (field_def), pointer        :: current_list_p     => NULL()
-@@ -610,7 +632,7 @@ character(len=fm_path_name_len)  :: name_str
- character(len=fm_path_name_len)  :: type_str
- character(len=fm_path_name_len)  :: val_name
+ type (field_def), pointer        :: root_p             => NULL()
+@@ -866,7 +896,7 @@ character(len=fm_string_len)     :: name_str
+ character(len=fm_string_len)     :: type_str
+ character(len=fm_string_len)     :: val_name
  character(len=fm_string_len)     :: tbl_name
 -integer                          :: control_array(MAX_FIELDS,3)
 +integer                          :: control_array(MAX_FIELDS,4)
  integer                          :: endcont
  integer                          :: icount
  integer                          :: index_list_name
-@@ -620,6 +642,7 @@ integer                          :: log_unit
+@@ -876,6 +906,7 @@ integer                          :: log_unit
  integer                          :: ltrec
  integer                          :: m
  integer                          :: midcont
@@ -684,7 +877,7 @@ index 141d85cd..633afd65 100644
  integer                          :: model
  integer                          :: startcont
  integer                          :: io_status
-@@ -630,6 +653,9 @@ type(field_names_type)           :: text_names
+@@ -886,6 +917,9 @@ type(field_names_type)           :: text_names
  type(method_type_short)          :: text_method_short
  type(method_type)                :: text_method
  type(method_type_very_short)     :: text_method_very_short
@@ -692,9 +885,9 @@ index 141d85cd..633afd65 100644
 +character(len=fm_path_name_len)  :: mypath
 +character(len=fm_field_name_len) :: mybase
  
- 
- 
-@@ -890,7 +916,7 @@ do while (.TRUE.)
+ if (.not.PRESENT(table_name)) then
+    tbl_name = 'field_table'
+@@ -1070,7 +1104,7 @@ do while (.TRUE.)
  
        ltrec= len_trim(control_str)
        control_array(:,1) = 1
@@ -703,9 +896,9 @@ index 141d85cd..633afd65 100644
        icount = 0
        do l= 1, ltrec
           if (control_str(l:l) == equal ) then
-@@ -921,6 +947,11 @@ do while (.TRUE.)
+@@ -1089,6 +1123,11 @@ do while (.TRUE.)
+               control_array(icount,3) = l-1   !End of previous string
                control_array(min(MAX_FIELDS,icount+1),1) = l+1 !Start of next string
- 
              endif
 +         elseif (control_str(l:l) == semicolon) then
 +
@@ -715,7 +908,7 @@ index 141d85cd..633afd65 100644
           endif
        enddo
  
-@@ -949,7 +980,8 @@ do while (.TRUE.)
+@@ -1116,7 +1155,8 @@ do while (.TRUE.)
          do l = 1,icount
            startcont = control_array(l,1)
            midcont   = control_array(l,2)
@@ -725,7 +918,7 @@ index 141d85cd..633afd65 100644
  
            method_name = trim(type_str)
            if (len_trim(method_name) > 0 ) then
-@@ -959,14 +991,36 @@ do while (.TRUE.)
+@@ -1126,14 +1166,36 @@ do while (.TRUE.)
            endif
  
            if (len_trim(method_name) > 0 ) then
@@ -768,7 +961,7 @@ index 141d85cd..633afd65 100644
          enddo
  
        endif
-@@ -998,6 +1052,7 @@ do while (.TRUE.)
+@@ -1152,6 +1214,7 @@ do while (.TRUE.)
           endif
        enddo
     endif
@@ -776,7 +969,7 @@ index 141d85cd..633afd65 100644
  79 continue
  enddo
  
-@@ -1005,6 +1060,25 @@ enddo
+@@ -1159,6 +1222,25 @@ enddo
  close(iunit, iostat=io_status)
  if(io_status/=0) call mpp_error(FATAL, 'field_manager_mod: Error in closing file '//trim(tbl_name))
  
@@ -801,10 +994,10 @@ index 141d85cd..633afd65 100644
 +!enddo
  
  if(present(nfields)) nfields = num_fields
- if (verb .gt. verb_level_warn) &
-@@ -1025,6 +1099,489 @@ call mpp_error(FATAL,trim(error_header)//' Error reading field table. Record = '
- end subroutine field_manager_init
- ! </SUBROUTINE>
+ 
+@@ -1173,6 +1255,489 @@ call mpp_error(FATAL,trim(error_header)//' Error reading field table. Record = '
+ 
+ end subroutine read_field_table_legacy
  
 +
 +!####################################################################################
@@ -1292,7 +1485,7 @@ index 141d85cd..633afd65 100644
  subroutine check_for_name_duplication
  integer :: i
  
-@@ -1389,6 +1946,41 @@ find_field_index_new = fm_get_index(field_name)
+@@ -1444,6 +2009,44 @@ find_field_index_new = fm_get_index(field_name)
  
  end function find_field_index_new
  
@@ -1331,48 +1524,39 @@ index 141d85cd..633afd65 100644
 +return
 +
 +end function find_tagging_index
- !#######################################################################
- !#######################################################################
- 
-diff --git a/fms2_io/fms_io_utils.F90 b/fms2_io/fms_io_utils.F90
-index 5d8898c3..18cac40c 100644
---- a/fms2_io/fms_io_utils.F90
-+++ b/fms2_io/fms_io_utils.F90
-@@ -248,6 +248,7 @@ subroutine string_copy(dest, source, check_for_null)
-   if (i < 1 ) i = len_trim(source)
- 
-   if (len_trim(source(1:i)) .gt. len(dest)) then
-+ print*,'len source = ',len_trim(source(1:i)),'len dest = ',len(dest)
-     call error("The input destination string is not big enough to" &
-                  //" to hold the input source string.")
-   endif
++!#######################################################################
++!#######################################################################
++
+ !> @brief This routine allows access to field information given an index.
+ !!
+ !> When passed an index, this routine will return the type of field,
 diff --git a/libFMS.F90 b/libFMS.F90
-index fec4e6c5..e770f805 100644
+index 888dfd00..8f73929c 100644
 --- a/libFMS.F90
 +++ b/libFMS.F90
-@@ -238,7 +238,7 @@ module fms
- 
+@@ -428,7 +428,7 @@ module fms
    !> memutils
-   use memutils_mod, only: memutils_init, print_memuse_stats
+   use memutils_mod, only: fms_memutils_init => memutils_init, &
+                           fms_memutils_print_memuse_stats => print_memuse_stats
 -
 +#ifndef MARS_GCM
    !> monin_obukhov
-   use monin_obukhov_mod, only: monin_obukhov_init, monin_obukhov_end, &
-                                mo_drag, mo_profile, mo_diff, stable_mix
-@@ -247,7 +247,7 @@ module fms
-                                monin_obukhov_derivative_m, monin_obukhov_profile_1d, &
-                                monin_obukhov_integral_m, monin_obukhov_integral_tq, &
-                                monin_obukhov_stable_mix
+   use monin_obukhov_mod, only: fms_monin_obukhov_init => monin_obukhov_init, &
+                                fms_monin_obukhov_end => monin_obukhov_end, &
+@@ -445,7 +445,7 @@ module fms
+                                  fms_monin_obukhov_inter_integral_m => monin_obukhov_integral_m, &
+                                  fms_monin_obukhov_inter_integral_tq => monin_obukhov_integral_tq, &
+                                  fms_monin_obukhov_inter_stable_mix => monin_obukhov_stable_mix
 -
 +#endif
    !> mosaic
-   use mosaic2_mod, only: get_mosaic_ntiles, get_mosaic_ncontacts, &
-                       get_mosaic_grid_sizes, get_mosaic_contact, &
+   use mosaic2_mod, only: fms_mosaic2_get_mosaic_ntiles => get_mosaic_ntiles, &
+                       fms_mosaic2_get_mosaic_ncontacts => get_mosaic_ncontacts, &
 diff --git a/mosaic2/grid2.F90 b/mosaic2/grid2.F90
-index bf4c1e97..c5e7bdfa 100644
+index dbf6a59c..09a74c2d 100644
 --- a/mosaic2/grid2.F90
 +++ b/mosaic2/grid2.F90
-@@ -158,7 +158,7 @@ end subroutine grid_end
+@@ -168,7 +168,7 @@ end subroutine grid_end
  !> @brief Determine if we are using the great circle algorithm
  !! @return Logical flag describing if we are using the great circlealgorithm
  function get_great_circle_algorithm()
@@ -1381,3 +1565,21 @@ index bf4c1e97..c5e7bdfa 100644
     logical :: get_great_circle_algorithm
  
     get_great_circle_algorithm = .false.
+diff --git a/sat_vapor_pres/sat_vapor_pres.F90 b/sat_vapor_pres/sat_vapor_pres.F90
+index 93310f97..e0022d60 100644
+--- a/sat_vapor_pres/sat_vapor_pres.F90
++++ b/sat_vapor_pres/sat_vapor_pres.F90
+@@ -756,8 +756,11 @@ private
+ !-----------------------------------------------------------------------
+ !  parameters for table size and resolution
+ 
+- integer, public :: tcmin = -160  ! minimum temperature (degC) in lookup table
+- integer, public :: tcmax =  100  ! maximum temperature (degC) in lookup table
++! integer, public :: tcmin = -160  ! minimum temperature (degC) in lookup table
++! integer, public :: tcmax =  100  ! maximum temperature (degC) in lookup table
++! AmesGCM Early Mars (05/2025)
++ integer, public :: tcmin = -223  ! minimum temperature (degC) in lookup table early Mars
++ integer, public :: tcmax =  350  ! maximum temperature (degC) in lookup table early Mars
+  integer :: esres =  10   ! table resolution (increments per degree)
+  integer :: nsize  ! (tcmax-tcmin)*esres+1    !  lookup table size
+  integer :: nlim   ! nsize-1

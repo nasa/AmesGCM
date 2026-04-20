@@ -1,9 +1,398 @@
+diff --git a/GFDL_tools/fv_ada_nudge.F90 b/GFDL_tools/fv_ada_nudge.F90
+index 3ff65e2..ea742ea 100644
+--- a/GFDL_tools/fv_ada_nudge.F90
++++ b/GFDL_tools/fv_ada_nudge.F90
+@@ -39,6 +39,7 @@ module fv_ada_nudge_mod
+  use diag_manager_mod,  only: register_diag_field, send_data
+  use constants_mod,     only: pi, grav, rdgas, cp_air, kappa, cnst_radius=>radius, seconds_per_day
+  use fms_mod,           only: write_version_number, check_nml_error
++ use fms_mod,           only: write_version_number, check_nml_error
+  use mpp_mod,           only: mpp_error, FATAL, stdlog, get_unit, mpp_pe, input_nml_file
+  use mpp_mod,           only: mpp_root_pe, stdout ! snz
+  use mpp_mod,           only: CLOCK_COMPONENT, CLOCK_SUBCOMPONENT, CLOCK_MODULE, CLOCK_ROUTINE
+@@ -1522,6 +1523,9 @@ endif
+     read(input_nml_file, nml = fv_ada_nudge_nml, iostat = io)
+     ierr = check_nml_error(io,'fv_ada_nudge_nml')
+ 
++    read(input_nml_file, nml = fv_ada_nudge_nml, iostat = io)
++    ierr = check_nml_error(io,'fv_ada_nudge_nml')
++
+     call write_version_number ( 'FV_ADA_NUDGE_MOD', version )
+     if ( master ) then
+          f_unit=stdlog()
+@@ -1780,6 +1784,32 @@ endif
+ 
+ ! snz add the following lines for recording the return values from the previous assim run
+ 
++! set dimensions for register restart
++    dim_names_4d(1) = "xaxis_1"
++    dim_names_4d(2) = "yaxis_1"
++    dim_names_4d(3) = "zaxis_1"
++    dim_names_4d(4) = "Time"
++
++    if (open_file(ada_driver_restart, restart_file, "read", domain, is_restart=.true.))
++      call fv_io_register_axis(ada_driver_restart, numx=1, numy=1, numz=1, zsize=(/size(Atm_var%u_adj,3)/))
++      call register_restart_field(ada_driver_restart, &
++           & "u_adj", Atm_var%u_adj(:,:,:), dim_names_4d)
++      call register_restart_field(ada_driver_restart, &
++           & "v_adj", Atm_var%v_adj(:,:,:), dim_names_4d)
++      call register_restart_field(ada_driver_restart, &
++           & "t_adj", Atm_var%t_adj(:,:,:), dim_names_4d)
++      call register_restart_field(ada_driver_restart, &
++           & "q_adj", Atm_var%q_adj(:,:,:), dim_names_4d)
++      call register_restart_field(ada_driver_restart, &
++           & "ps_adj", Atm_var%ps_adj(:,:), dim_names_4d)
++
++      if ( mpp_pe() .eq. mpp_root_pe() ) then
++          write (stdout_unit,*) 'Reading ada restart information from ', 'INPUT/'//trim(restart_file)
++      end if
++      call read_restart(ada_driver_restart)
++      call close_file(ada_driver_restart)
++    endif
++
+ ! set dimensions for register restart
+     dim_names_4d(1) = "xaxis_1"
+     dim_names_4d(2) = "yaxis_1"
+diff --git a/driver/GFDL/atmosphere.F90 b/driver/GFDL/atmosphere.F90
+index ad5ded9..579c177 100644
+--- a/driver/GFDL/atmosphere.F90
++++ b/driver/GFDL/atmosphere.F90
+@@ -33,6 +33,9 @@ module atmosphere_mod
+ use atmos_co2_mod,         only: atmos_co2_rad, co2_radiation_override
+ use block_control_mod,     only: block_control_type
+ use constants_mod,         only: cp_air, rdgas, grav, rvgas, kappa, pstd_mks
++use time_manager_mod,      only: time_type, get_time, set_time, operator(+), &
++                                 operator(-), operator(/), time_type_to_real
++use fms_mod,               only: error_mesg, FATAL,                 &
+ use time_manager_mod,      only: time_type, get_time, set_time, operator(+), &
+                                  operator(-), operator(/), time_type_to_real
+ use fms_mod,               only: error_mesg, FATAL,                 &
+@@ -41,6 +44,8 @@ use fms_mod,               only: error_mesg, FATAL,                 &
+                                  mpp_clock_id, mpp_clock_begin,     &
+                                  mpp_clock_end, CLOCK_SUBCOMPONENT, &
+                                  clock_flag_default
++use fms2_io_mod,           only: file_exists
++                                 clock_flag_default
+ use fms2_io_mod,           only: file_exists
+ use mpp_mod,               only: mpp_error, FATAL, NOTE, input_nml_file, &
+                                  mpp_npes, mpp_get_current_pelist, &
+@@ -51,6 +56,8 @@ use xgrid_mod,             only: grid_box_type
+ !miz
+ use diag_manager_mod,      only: register_diag_field, send_data
+ use field_manager_mod,     only: MODEL_ATMOS
++use tracer_manager_mod,    only: get_tracer_index, get_number_tracers, &
++                                 NO_TRACER, get_tracer_names
+ use tracer_manager_mod,    only: get_tracer_index, get_number_tracers, &
+                                  NO_TRACER, get_tracer_names
+ use physics_driver_mod,    only: surf_diff_type
+@@ -124,6 +131,7 @@ public :: atmos_radiation_driver_inputs, atmos_physics_driver_inputs
+ ! Include variable "version" to be written to log file.
+ #include<file_version.h>
+ character(len=20)   :: mod_name = 'GFDL/atmosphere_mod'
++character(len=20)   :: mod_name = 'GFDL/atmosphere_mod'
+ 
+ !---- private data ----
+   type (time_type) :: Time_step_atmos
+@@ -223,11 +231,13 @@ contains
+ !----- initialize FV dynamical core -----
+    !NOTE do we still need the second file_exist call?
+    cold_start = (.not.file_exists('INPUT/fv_core.res.nc') .and. .not.file_exists('INPUT/fv_core.res.tile1.nc'))
++   cold_start = (.not.file_exists('INPUT/fv_core.res.nc') .and. .not.file_exists('INPUT/fv_core.res.tile1.nc'))
+ 
+    call fv_control_init( Atm, dt_atmos, mygrid, grids_on_this_pe, p_split )  ! allocates Atm components; sets mygrid
+ 
+    if (Atm(mygrid)%coarse_graining%write_coarse_restart_files .or. &
+        Atm(mygrid)%coarse_graining%write_coarse_diagnostics) then
++       Atm(mygrid)%coarse_graining%write_coarse_diagnostics) then
+       call coarse_graining_init(Atm(mygrid)%flagstruct%npx, Atm(mygrid)%npz, &
+            Atm(mygrid)%layout, Atm(mygrid)%bd%is, Atm(mygrid)%bd%ie, &
+            Atm(mygrid)%bd%js, Atm(mygrid)%bd%je, Atm(mygrid)%coarse_graining%factor, &
+@@ -240,6 +250,7 @@ contains
+ 
+ !----- write version and namelist to log file -----
+    call write_version_number ( mod_name, version )
++   call write_version_number ( mod_name, version )
+ 
+ !-----------------------------------
+ 
+@@ -310,6 +321,7 @@ contains
+              q_dt(isc:iec,jsc:jec,npz,nq) )
+ !--- allocate pref
+    allocate(pref(npz+1,2), dum1d(npz+1))
++   allocate(pref(npz+1,2), dum1d(npz+1))
+ 
+    if (Atm(mygrid)%flagstruct%do_inline_mp) then
+      call gfdl_mp_init(input_nml_file, stdlog(), Atm(mygrid)%flagstruct%hydrostatic)
+@@ -333,6 +345,7 @@ contains
+            Atm(mygrid)%atmos_axes(4), Atm(mygrid)%coarse_graining)
+    endif
+    if (Atm(mygrid)%coarse_graining%write_coarse_restart_files) then
++      call fv_coarse_restart_init(Atm(mygrid)%npz, Atm(mygrid)%flagstruct%nt_prog, &
+       call fv_coarse_restart_init(Atm(mygrid)%npz, Atm(mygrid)%flagstruct%nt_prog, &
+            Atm(mygrid)%flagstruct%nt_phys, Atm(mygrid)%flagstruct%hydrostatic, &
+            Atm(mygrid)%flagstruct%hybrid_z, Atm(mygrid)%flagstruct%fv_land, &
+@@ -395,6 +408,13 @@ contains
+    endif
+ #endif
+ 
++!  --- initiate the start for a restarted regional forecast
++   if ( Atm(mygrid)%gridstruct%regional .and. Atm(mygrid)%flagstruct%warm_start ) then
++     call start_regional_restart(Atm(1),       &
++                                 isc, iec, jsc, jec, &
++                                 isd, ied, jsd, jed )
++   endif
++
+ !  --- initiate the start for a restarted regional forecast
+    if ( Atm(mygrid)%gridstruct%regional .and. Atm(mygrid)%flagstruct%warm_start ) then
+      call start_regional_restart(Atm(1),       &
+@@ -405,6 +425,20 @@ contains
+ ! This call needs to be separate from the register nudging restarts after initialization
+    call fv_io_register_nudge_restart ( Atm )
+ 
++   if ( Atm(mygrid)%flagstruct%na_init>0 ) then
++      if ( .not. Atm(mygrid)%flagstruct%hydrostatic ) then
++           call prt_maxmin('Before adi: W', Atm(mygrid)%w, isc, iec, jsc, jec, Atm(mygrid)%ng, npz, 1.)
++      endif
++      call adiabatic_init(zvir,Atm(mygrid)%flagstruct%nudge_dz)
++      if ( .not. Atm(mygrid)%flagstruct%hydrostatic ) then
++           call prt_maxmin('After adi: W', Atm(mygrid)%w, isc, iec, jsc, jec, Atm(mygrid)%ng, npz, 1.)
++! Not nested?
++           call prt_height('na_ini Z500', isc,iec, jsc,jec, 3, npz, 500.E2, Atm(mygrid)%phis, Atm(mygrid)%delz,    &
++                Atm(mygrid)%peln, Atm(mygrid)%gridstruct%area_64(isc:iec,jsc:jec), Atm(mygrid)%gridstruct%agrid_64(isc:iec,jsc:jec,2))
++      endif
++   else
++      call mpp_error(NOTE,'No adiabatic initialization correction in use')
++   endif
+    if ( Atm(mygrid)%flagstruct%na_init>0 ) then
+       if ( .not. Atm(mygrid)%flagstruct%hydrostatic ) then
+            call prt_maxmin('Before adi: W', Atm(mygrid)%w, isc, iec, jsc, jec, Atm(mygrid)%ng, npz, 1.)
+@@ -457,6 +491,12 @@ contains
+       ID_tnhus = register_cmip_diag_field_3d (mod_name, 'tnhus', Time, &
+            'Tendency of Specific Humidity', 's-1', &
+            standard_name='tendency_of_specific_humidity')
++      ID_tnt = register_cmip_diag_field_3d (mod_name, 'tnt', Time, &
++           'Tendency of Air Temperature', 'K s-1', &
++           standard_name='tendency_of_air_temperature')
++      ID_tnhus = register_cmip_diag_field_3d (mod_name, 'tnhus', Time, &
++           'Tendency of Specific Humidity', 's-1', &
++           standard_name='tendency_of_specific_humidity')
+ 
+       !---loop for tracers
+       do itrac = 1, num_tracers
+@@ -558,14 +598,74 @@ contains
+  end subroutine p_adi
+ 
+ 
++ subroutine atmosphere_dynamics ( Time, Surf_diff )
++ subroutine p_adi(km, ng, ifirst, ilast, jfirst, jlast, ptop,   &
++                  delp, pt, ps, pe, peln, pk, pkz, hydrostatic)
++! Given (ptop, delp) computes (ps, pk, pe, peln, pkz)
++! Input:
++   integer,  intent(in):: km, ng
++   integer,  intent(in):: ifirst, ilast            ! Longitude strip
++   integer,  intent(in):: jfirst, jlast            ! Latitude strip
++   logical, intent(in)::  hydrostatic
++   real, intent(in):: ptop
++   real, intent(in)::   pt(ifirst-ng:ilast+ng,jfirst-ng:jlast+ng, km)
++   real, intent(in):: delp(ifirst-ng:ilast+ng,jfirst-ng:jlast+ng, km)
++! Output:
++   real, intent(out) ::   ps(ifirst-ng:ilast+ng, jfirst-ng:jlast+ng)
++   real, intent(out) ::   pk(ifirst:ilast, jfirst:jlast, km+1)
++   real, intent(out) ::   pe(ifirst-1:ilast+1,km+1,jfirst-1:jlast+1) ! Ghosted Edge pressure
++   real, intent(out) :: peln(ifirst:ilast, km+1, jfirst:jlast)    ! Edge pressure
++   real, intent(out) ::  pkz(ifirst:ilast, jfirst:jlast, km)
++! Local
++   real pek
++   integer i, j, k
++
++   pek = ptop ** kappa
++!$OMP parallel do default (none) &
++!$OMP              shared (ifirst,ilast,jfirst,jlast,km,ptop,pek,pe,pk, &
++!$OMP                      ps,delp,peln,hydrostatic,pkz) &
++!$OMP             private (j, i, k)
++   do j=jfirst,jlast
++      do i=ifirst,ilast
++         pe(i,1,j) = ptop
++         pk(i,j,1) = pek
++      enddo
++
++      do k=2,km+1
++         do i=ifirst,ilast
++            pe(i,k,j) = pe(i,k-1,j) + delp(i,j,k-1)
++            peln(i,k,j) = log(pe(i,k,j))
++            pk(i,j,k) = exp( kappa*peln(i,k,j) )
++         enddo
++      enddo
++
++      do i=ifirst,ilast
++         ps(i,j) = pe(i,km+1,j)
++      enddo
++
++      if ( hydrostatic ) then
++         do k=1,km
++            do i=ifirst,ilast
++               pkz(i,j,k) = (pk(i,j,k+1)-pk(i,j,k))/(kappa*(peln(i,k+1,j)-peln(i,k,j)))
++            enddo
++         enddo
++      endif
++   enddo
++
++ end subroutine p_adi
++
++
+  subroutine atmosphere_dynamics ( Time, Surf_diff )
+    type(time_type),intent(in) :: Time
+    integer :: itrac, n, psc
+    integer :: k, w_diff, nt_dyn
+    type(surf_diff_type), intent(inout):: Surf_diff
++   type(surf_diff_type), intent(inout):: Surf_diff
+    logical :: used
+    type(time_type) :: atmos_time
+    integer :: atmos_time_step
++   type(time_type) :: atmos_time
++   integer :: atmos_time_step
+    real :: rdt
+ !---- Call FV dynamics -----
+ 
+@@ -764,6 +864,7 @@ contains
+           q_dt(:,:,k,w_diff) = 0.
+         enddo
+     endif
++#endif
+ #endif
+ 
+     if (Atm(1)%idiag%id_u_dt_sg > 0) then
+@@ -794,6 +895,7 @@ contains
+  end subroutine atmosphere_dynamics
+ 
+ 
++ subroutine atmosphere_end (Time, Grid_box )
+  subroutine atmosphere_end (Time, Grid_box )
+    type (time_type),      intent(in)    :: Time
+    type(grid_box_type),   intent(inout) :: Grid_box
+@@ -1149,6 +1251,7 @@ contains
+    endif
+ 
+ !--- adjust w and heat tendency for non-hydrostatic case
++#ifdef USE_Q_DT
+ #ifdef USE_Q_DT
+     if ( .not.Atm(n)%flagstruct%hydrostatic .and. w_diff /= NO_TRACER ) then
+       rcp = 1. / cp_air
+@@ -1167,6 +1270,7 @@ contains
+          enddo
+        enddo
+     endif
++#endif
+ #endif
+ 
+     call timing_on('FV_UPDATE_PHYS')
+@@ -1225,6 +1329,25 @@ contains
+  end subroutine atmosphere_state_update
+ 
+ 
++ subroutine adiabatic_init(zvir,nudge_dz)
++   real, allocatable, dimension(:,:,:):: u0, v0, t0, dz0, dp0
++   real, intent(in):: zvir
++   logical, intent(inout):: nudge_dz
++!  real, parameter:: wt = 1.  ! was 2.
++   real, parameter:: wt = 2.
++!***********
++! Haloe Data
++!***********
++   real, parameter::    q1_h2o = 2.2E-6
++   real, parameter::    q7_h2o = 3.8E-6
++   real, parameter::  q100_h2o = 3.8E-6
++   real, parameter:: q1000_h2o = 3.1E-6
++   real, parameter:: q2000_h2o = 2.8E-6
++   real, parameter:: q3000_h2o = 3.0E-6
++   real:: xt, p00, q00
++   integer:: isc, iec, jsc, jec, npz
++   integer:: m, n, i,j,k, ngc
++
+  subroutine adiabatic_init(zvir,nudge_dz)
+    real, allocatable, dimension(:,:,:):: u0, v0, t0, dz0, dp0
+    real, intent(in):: zvir
+@@ -1248,6 +1371,9 @@ contains
+ 
+    xt = 1./(1.+wt)
+ 
++   write(errstr,'(A, I4, A)') 'Performing adiabatic init',  Atm(mygrid)%flagstruct%na_init, ' times'
++   xt = 1./(1.+wt)
++
+    write(errstr,'(A, I4, A)') 'Performing adiabatic init',  Atm(mygrid)%flagstruct%na_init, ' times'
+    call mpp_error(NOTE, errstr)
+    sphum = get_tracer_index (MODEL_ATMOS, 'sphum' )
+@@ -1258,7 +1384,20 @@ contains
+     iec = Atm(mygrid)%bd%iec
+     jsc = Atm(mygrid)%bd%jsc
+     jec = Atm(mygrid)%bd%jec
++   sphum = get_tracer_index (MODEL_ATMOS, 'sphum' )
+ 
++    npz = Atm(mygrid)%npz
++
++    isc = Atm(mygrid)%bd%isc
++    iec = Atm(mygrid)%bd%iec
++    jsc = Atm(mygrid)%bd%jsc
++    jec = Atm(mygrid)%bd%jec
++
++    ngc = Atm(mygrid)%ng
++    isd = isc - ngc
++    ied = iec + ngc
++    jsd = jsc - ngc
++    jed = jec + ngc
+     ngc = Atm(mygrid)%ng
+     isd = isc - ngc
+     ied = iec + ngc
+@@ -1470,6 +1609,7 @@ contains
+  end subroutine adiabatic_init
+ 
+ 
++
+  subroutine atmos_physics_driver_inputs (Physics, Atm_block, Physics_tendency)
+    type (physics_type),  intent(inout) :: Physics
+    type (block_control_type), intent(in) :: Atm_block
+diff --git a/driver/SHiELD/atmosphere.F90 b/driver/SHiELD/atmosphere.F90
+index b369182..c257f56 100644
+--- a/driver/SHiELD/atmosphere.F90
++++ b/driver/SHiELD/atmosphere.F90
+@@ -35,12 +35,15 @@ use block_control_mod,      only: block_control_type
+ use constants_mod,          only: cp_air, rdgas, grav, rvgas, kappa, pstd_mks, pi
+ use time_manager_mod,       only: time_type, get_time, set_time, operator(+), &
+                                   operator(-), operator(/), time_type_to_real
++use fms_mod,                only: error_mesg, FATAL,                 &
+ use fms_mod,                only: error_mesg, FATAL,                 &
+                                   check_nml_error, stdlog,           &
+                                   write_version_number,              &
+                                   mpp_clock_id, mpp_clock_begin,     &
+                                   mpp_clock_end, CLOCK_SUBCOMPONENT, &
+                                   clock_flag_default
++use fms2_io_mod,            only: file_exists
++                                  clock_flag_default
+ use fms2_io_mod,            only: file_exists
+ use mpp_mod,                only: mpp_error, stdout, FATAL, WARNING, NOTE, &
+                                   input_nml_file, mpp_root_pe,    &
+@@ -196,6 +199,7 @@ contains
+ !----- initialize FV dynamical core -----
+    !NOTE do we still need the second file_exist call?
+    cold_start = (.not.file_exists('INPUT/fv_core.res.nc') .and. .not.file_exists('INPUT/fv_core.res.tile1.nc'))
++   cold_start = (.not.file_exists('INPUT/fv_core.res.nc') .and. .not.file_exists('INPUT/fv_core.res.tile1.nc'))
+ 
+    call fv_control_init( Atm, dt_atmos, mygrid, grids_on_this_pe, p_split )  ! allocates Atm components; sets mygrid
+ 
+@@ -311,6 +315,7 @@ contains
+            Atm(mygrid)%atmos_axes(4), Atm(mygrid)%coarse_graining)
+    endif
+    if (Atm(mygrid)%coarse_graining%write_coarse_restart_files) then
++      call fv_coarse_restart_init(Atm(mygrid)%npz, Atm(mygrid)%flagstruct%nt_prog, &
+       call fv_coarse_restart_init(Atm(mygrid)%npz, Atm(mygrid)%flagstruct%nt_prog, &
+            Atm(mygrid)%flagstruct%nt_phys, Atm(mygrid)%flagstruct%hydrostatic, &
+            Atm(mygrid)%flagstruct%hybrid_z, Atm(mygrid)%flagstruct%fv_land, &
 diff --git a/driver/mars/atmosphere.F90 b/driver/mars/atmosphere.F90
 new file mode 100644
-index 0000000..015e54b
+index 0000000..24a6f8c
 --- /dev/null
 +++ b/driver/mars/atmosphere.F90
-@@ -0,0 +1,2046 @@
+@@ -0,0 +1,2108 @@
 +!***********************************************************************
 +!*                   GNU Lesser General Public License
 +!*
@@ -37,21 +426,28 @@ index 0000000..015e54b
 +! FMS modules:
 +!-----------------
 +#ifndef MARS_GCM
-+use atmos_co2_mod,      only: atmos_co2_rad, co2_radiation_override
++use atmos_co2_mod,          only: atmos_co2_rad, co2_radiation_override
 +#endif
 +use block_control_mod,      only: block_control_type
-+use constants_mod,      only: cp_air, rdgas, grav, rvgas, kappa, pi, &
-+                              SECONDS_PER_DAY
++use constants_mod,          only: cp_air, rdgas, grav, rvgas, kappa, pi, &
++                                  SECONDS_PER_DAY
 +use time_manager_mod,       only: time_type, get_time, set_time, operator(+), &
 +                                  operator(-), operator(/), time_type_to_real
-+use fms_mod,                only: file_exist, open_namelist_file,    &
-+                                  close_file, error_mesg, FATAL,     &
-+                                  check_nml_error, stdlog,           &
-+                                  write_version_number,              &
-+                                  set_domain,   &
-+                                  mpp_clock_id, mpp_clock_begin,     &
++
++use fms_mod,                only: error_mesg, FATAL,       &
++                                  check_nml_error, &
++                                  mpp_pe, mpp_root_pe, &
++                                  write_version_number, stdlog,        &
++                                  uppercase, mpp_clock_id, mpp_clock_begin,     &
 +                                  mpp_clock_end, CLOCK_SUBCOMPONENT, &
-+                                  clock_flag_default, nullify_domain
++                                  clock_flag_default
++
++use fms2_io_mod,            only: file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
++                                  register_restart_field, register_axis, unlimited, &
++                                  open_file, read_restart, write_restart, close_file, &
++                                  register_field, read_data, write_data, register_variable_attribute, &
++                                  get_global_io_domain_indices, get_variable_size, variable_exists
++
 +use mpp_mod,                only: mpp_error, stdout, FATAL, WARNING, NOTE, &
 +                                  input_nml_file, mpp_root_pe,    &
 +                                  mpp_npes, mpp_pe, mpp_chksum,   &
@@ -97,7 +493,7 @@ index 0000000..015e54b
 +use fv_restart_mod,     only: fv_restart, fv_write_restart
 +use fv_timing_mod,      only: timing_on, timing_off
 +use fv_mp_mod,          only: is_master
-+use fv_sg_mod,          only: fv_subgrid_z
++use fv_sg_mod,          only: fv_sg_AM5
 +use fv_update_phys_mod, only: fv_update_phys
 +use fv_io_mod,          only: fv_io_register_nudge_restart
 +use fv_regional_mod,    only: start_regional_restart, read_new_bc_data
@@ -157,13 +553,13 @@ index 0000000..015e54b
 +
 +  !These are convenience variables for local use only, and are set to values in Atm%
 +  real    :: dt_atmos
-+  real    :: zvir
++  real    :: zvir, rdt
 +  integer :: npx, npy, npz, ncnst, pnats
 +  integer :: isc, iec, jsc, jec
 +  integer :: isd, ied, jsd, jed
 +  integer :: nq                       ! transported tracers
 +  integer :: sec, seconds, days
-+  integer :: id_dynam, id_fv_diag, id_subgridz, id_phys
++  integer :: id_dynam, id_fv_diag, id_subgrid, id_phys
 +  logical :: cold_start = .false.       ! read in initial condition
 +
 +  integer, dimension(:), allocatable :: id_tracerdt_dyn
@@ -234,7 +630,7 @@ index 0000000..015e54b
 +   current_time_in_seconds = time_type_to_real( Time - Time_init )
 +   if (mpp_pe() == 0) write(0,"('atmosphere_init: current_time_seconds = ',f9.1)")current_time_in_seconds
 +
-+                    call timing_on('ATMOS_INIT')
++!                    call timing_on('ATMOS_INIT')
 +   allocate(pelist(mpp_npes()))
 +   call mpp_get_current_pelist(pelist)
 +
@@ -250,9 +646,11 @@ index 0000000..015e54b
 +
 +!----- initialize FV dynamical core -----
 +   !NOTE do we still need the second file_exist call?
-+   cold_start = (.not.file_exist('INPUT/fv_core.res.nc') .and. .not.file_exist('INPUT/fv_core.res.tile1.nc'))
++   cold_start = (.not.file_exists('INPUT/fv_core.res.nc') .and. .not.file_exists('INPUT/fv_core.res.tile1.nc'))
 +
 +   call fv_control_init( Atm, dt_atmos, mygrid, grids_on_this_pe, p_split )  ! allocates Atm components; sets mygrid
++
++   call mpp_set_current_pelist(Atm(mygrid)%pelist, no_sync=.TRUE.)
 +
 +   if (Atm(mygrid)%coarse_graining%write_coarse_restart_files .or. &
 +       Atm(mygrid)%coarse_graining%write_coarse_diagnostics) then
@@ -300,11 +698,6 @@ index 0000000..015e54b
 +      call mpp_error (FATAL,' atmosphere_init: condensate species are not first in the list of &
 +                            &tracers defined in the field_table')
 +   endif
-+
-+   ! Allocate grid variables to be used to calculate gradient in 2nd order flux exchange
-+   ! This data is only needed for the COARSEST grid.
-+   !call switch_current_Atm(Atm(mygrid))
-+   call set_domain(Atm(mygrid)%domain)
 +
 +!----- allocate and zero out the dynamics (and accumulated) tendencies
 +   allocate( u_dt(isd:ied,jsd:jed,npz), &
@@ -363,7 +756,7 @@ index 0000000..015e54b
 +
 +!  --- initialize clocks for dynamics, physics_down and physics_up
 +   id_dynam     = mpp_clock_id ('FV dy-core',  flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
-+   id_subgridz  = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
++   id_subgrid   = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +   id_fv_diag   = mpp_clock_id ('FV Diag',     flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +
 +
@@ -421,12 +814,11 @@ index 0000000..015e54b
 +
 +!  --- initialize clocks for dynamics, physics_down and physics_up
 +   id_dynam     = mpp_clock_id ('FV dy-core',  flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
-+   id_subgridz  = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
++   id_subgrid   = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +   id_fv_diag   = mpp_clock_id ('FV Diag',     flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +
-+                    call timing_off('ATMOS_INIT')
++!                    call timing_off('ATMOS_INIT')
 +
-+   call set_domain(Atm(mygrid)%domain)
 +
 + end subroutine atmosphere_init
 +
@@ -458,12 +850,11 @@ index 0000000..015e54b
 +
 +    time_total = days*SECONDS_PER_DAY + seconds
 +
-+    call mpp_clock_begin(id_dynam)
 +
-+    n = mygrid
 +    do psc=1,abs(p_split)
++    n = mygrid
++     call mpp_set_current_pelist(Atm(n)%pelist, no_sync=.TRUE.)
 +
-+       call set_domain(Atm(n)%domain)  ! needed for diagnostic output done in fv_dynamics
 +
 +                    call timing_on('fv_dynamics')
 +!uc/vc only need be same on coarse grid? However BCs do need to be the same
@@ -472,6 +863,7 @@ index 0000000..015e54b
 +                      Atm(n)%flagstruct%reproduce_sum, kappa, cp_air, zvir,&
 +                      Atm(n)%ptop, Atm(n)%ks, nq,                          &
 +                      Atm(n)%flagstruct%n_split, Atm(n)%flagstruct%q_split,&
++                      Atm(n)%u0, Atm(n)%v0,                                &
 +                      Atm(n)%u, Atm(n)%v, Atm(n)%w, Atm(n)%delz,           &
 +                      Atm(n)%flagstruct%hydrostatic,                       &
 +                      Atm(n)%pt, Atm(n)%delp, Atm(n)%q, Atm(n)%ps,         &
@@ -482,8 +874,9 @@ index 0000000..015e54b
 +                      Atm(n)%mfy, Atm(n)%cx, Atm(n)%cy, Atm(n)%ze0,        &
 +                      Atm(n)%flagstruct%hybrid_z,                          &
 +                      Atm(n)%gridstruct, Atm(n)%flagstruct,                &
-+                      Atm(n)%neststruct, Atm(n)%idiag, Atm(n)%bd,          &
-+                      Atm(n)%parent_grid, Atm(n)%domain, Atm(n)%inline_mp)
++                      Atm(n)%neststruct, Atm(n)%thermostruct, Atm(n)%idiag, Atm(n)%bd,          &
++                      Atm(n)%parent_grid, Atm(n)%domain, Atm(n)%inline_mp, &
++                      Atm(n)%heat_source, Atm(n)%diss_est)
 +
 +     call timing_off('fv_dynamics')
 +
@@ -495,7 +888,6 @@ index 0000000..015e54b
 +    endif
 +
 +    end do !p_split
-+    call mpp_clock_end (id_dynam)
 +
 +    u_dt = 0.
 +    v_dt = 0.
@@ -568,8 +960,6 @@ index 0000000..015e54b
 +       enddo
 +     enddo
 +
-+     call nullify_domain()
-+
 +!--- nesting update after updating atmospheric variables with
 +!--- physics tendencies
 +    if (ngrids > 1 .and. p_split > 0) then
@@ -580,13 +970,86 @@ index 0000000..015e54b
 +       call mpp_clock_end (id_phys)
 +
 +
++   call mpp_clock_begin (id_subgrid)
++
++!-----------------------------------------------------
++!--- COMPUTE SUBGRID Z
++!-----------------------------------------------------
++!--- zero out tendencies
++
++    call timing_on('FV_SUBGRID_Z')
++
++    u_dt(:,:,:)   = 0. ! These are updated by fv_sg_AM5
++    v_dt(:,:,:)   = 0.
++! t_dt is used for two different purposes:
++!    1 - to calculate the diagnostic temperature tendency from fv_sg_AM5
++!    2 - as an accumulator for the IAU increment and physics tendency
++! because of this, it will need to be zeroed out after the diagnostic is calculated
++    t_dt(:,:,:)   = Atm(n)%pt(isc:iec,jsc:jec,:)
++
++    sphum   = get_tracer_index (MODEL_ATMOS, 'sphum' )
++    sphum   = MAX(sphum, 1)
++    qv_dt(:,:,:)  = Atm(n)%q (isc:iec,jsc:jec,:,sphum)
++    q_dt(:,:,:,:) = 0.
++
++    rdt = 1./dt_atmos
++
++    w_diff = get_tracer_index (MODEL_ATMOS, 'w_diff' )
++    if ( Atm(n)%flagstruct%fv_sg_adj > 0 ) then
++      nt_dyn = nq
++      if ( w_diff /= NO_TRACER ) then
++        nt_dyn = nq - 1
++      endif
++      call fv_sg_AM5(isd, ied, jsd, jed, isc, iec, jsc, jec, Atm(n)%npz, &
++                        nt_dyn, dt_atmos, Atm(n)%flagstruct%fv_sg_adj,      &
++                        Atm(n)%flagstruct%nwat, Atm(n)%delp, Atm(n)%pe,     &
++                        Atm(n)%peln, Atm(n)%pkz, Atm(n)%pt, Atm(n)%q,       &
++                        Atm(n)%ua, Atm(n)%va, Atm(n)%flagstruct%hydrostatic,&
++                        Atm(n)%w, Atm(n)%delz, u_dt, v_dt, t_dt, q_dt,      &
++                        Atm(n)%flagstruct%n_sponge)
++   endif
++
++
++#ifdef USE_Q_DT
++    if ( .not. Atm(n)%flagstruct%hydrostatic .and. w_diff /= NO_TRACER ) then
++!$OMP parallel do default (none) &
++!$OMP              shared (isc, iec, jsc, jec, w_diff, n, Atm, q_dt) &
++!$OMP             private (k)
++       do k=1, Atm(n)%npz
++          Atm(n)%q(isc:iec,jsc:jec,k,w_diff) = Atm(n)%w(isc:iec,jsc:jec,k) + w0_big
++          q_dt(:,:,k,w_diff) = 0.
++        enddo
++    endif
++#endif
++
++    if (Atm(1)%idiag%id_u_dt_sg > 0) then
++       used = send_data(Atm(1)%idiag%id_u_dt_sg, u_dt(isc:iec,jsc:jec,:), fv_time)
++    end if
++    if (Atm(1)%idiag%id_v_dt_sg > 0) then
++       used = send_data(Atm(1)%idiag%id_v_dt_sg, v_dt(isc:iec,jsc:jec,:), fv_time)
++    end if
++    if (Atm(1)%idiag%id_t_dt_sg > 0) then
++       t_dt(:,:,:) = rdt*(Atm(1)%pt(isc:iec,jsc:jec,:) - t_dt(:,:,:))
++       used = send_data(Atm(1)%idiag%id_t_dt_sg, t_dt, fv_time)
++    end if
++    if (Atm(1)%idiag%id_qv_dt_sg > 0) then
++       qv_dt(:,:,:) = rdt*(Atm(1)%q(isc:iec,jsc:jec,:,sphum) - qv_dt(:,:,:))
++       used = send_data(Atm(1)%idiag%id_qv_dt_sg, qv_dt, fv_time)
++    end if
++
++! zero out t_dt for use as an accumulator
++    t_dt = 0.
++
++   call timing_off('FV_SUBGRID_Z')
++
++   call mpp_clock_end (id_subgrid)
 +  !---- diagnostics for FV dynamics -----
 +
-+       call nullify_domain()
 +       call timing_on('FV_DIAG')
 +       call fv_diag(Atm(n:n), zvir, fv_time, Atm(n)%flagstruct%print_freq)
 +
 +       call timing_off('FV_DIAG')
++    call mpp_set_current_pelist()
 +
 + end subroutine atmosphere
 +
@@ -601,17 +1064,15 @@ index 0000000..015e54b
 +
 + subroutine atmosphere_end
 +
-+   integer n
++    integer n
 +
 +    call get_time (fv_time, seconds,  days)
 +
 +#if defined(MARS_GCM) || defined(VENUS_GCM) || defined(STRAT_GCM)
 +    do n=1,ngrids
-+      call set_domain ( Atm(n)%domain )
 +    !          Need to write physics restart files
-+      if( grids_on_this_pe(N) )  call mars_physics_end( days )
++      if( grids_on_this_pe(N) )  call mars_physics_end( Atm(n)%domain, days )
 +
-+      call nullify_domain ( )
 +    enddo
 +#else
 +    do n=1,ngrids
@@ -622,8 +1083,9 @@ index 0000000..015e54b
 +    call fv_end(Atm, mygrid)
 +    deallocate(Atm)
 +#endif
-+   deallocate( u_dt, v_dt, t_dt, qv_dt, q_dt, pref, dum1d )
-+   deallocate( qratio)
++    deallocate( u_dt, v_dt, t_dt, qv_dt, q_dt, pref, dum1d )
++    deallocate( qratio)
++    call mpp_set_current_pelist()
 +
 +
 + end subroutine atmosphere_end
@@ -717,10 +1179,6 @@ index 0000000..015e54b
 +                            &tracers defined in the field_table')
 +   endif
 +
-+   ! Allocate grid variables to be used to calculate gradient in 2nd order flux exchange
-+   ! This data is only needed for the COARSEST grid.
-+   !call switch_current_Atm(Atm(mygrid))
-+   call set_domain(Atm(mygrid)%domain)
 +
 +   allocate(Grid_box%dx    (   isc:iec  , jsc:jec+1))
 +   allocate(Grid_box%dy    (   isc:iec+1, jsc:jec  ))
@@ -787,7 +1245,7 @@ index 0000000..015e54b
 +
 +!  --- initialize clocks for dynamics, physics_down and physics_up
 +   id_dynam     = mpp_clock_id ('FV dy-core',  flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
-+   id_subgridz  = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
++   id_subgrid   = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +   id_fv_diag   = mpp_clock_id ('FV Diag',     flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +!---- initialize cmip diagnostic output ----
 +   call atmos_cmip_diag_init   ( Atm(mygrid)%ak, Atm(mygrid)%bk, pref(1,1), Atm(mygrid)%atmos_axes, Time )
@@ -839,7 +1297,6 @@ index 0000000..015e54b
 +   call fv_io_register_nudge_restart ( Atm )
 +
 +   if ( Atm(mygrid)%flagstruct%na_init>0 ) then
-+      call nullify_domain ( )
 +      if ( .not. Atm(mygrid)%flagstruct%hydrostatic ) then
 +           call prt_maxmin('Before adi: W', Atm(mygrid)%w, isc, iec, jsc, jec, Atm(mygrid)%ng, npz, 1.)
 +      endif
@@ -915,16 +1372,15 @@ index 0000000..015e54b
 +
 +!  --- initialize clocks for dynamics, physics_down and physics_up
 +   id_dynam     = mpp_clock_id ('FV dy-core',  flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
-+   id_subgridz  = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
++   id_subgrid   = mpp_clock_id ('FV subgrid_z',flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +   id_fv_diag   = mpp_clock_id ('FV Diag',     flags = clock_flag_default, grain=CLOCK_SUBCOMPONENT )
 +
 +                    call timing_off('ATMOS_INIT')
 +
-+   call set_domain(Atm(mygrid)%domain)
 +
 + end subroutine atmosphere_init
 +
-+
++#ifndef MARS_GCM
 + subroutine p_adi(km, ng, ifirst, ilast, jfirst, jlast, ptop,   &
 +                  delp, pt, ps, pe, peln, pk, pkz, hydrostatic)
 +! Given (ptop, delp) computes (ps, pk, pe, peln, pkz)
@@ -1148,7 +1604,7 @@ index 0000000..015e54b
 +   call mpp_clock_end (id_subgridz)
 +
 + end subroutine atmosphere_dynamics
-+
++#endif MARS_GCM
 +
 + subroutine atmosphere_end (Time, Grid_box )!rab, Radiation, Physics)
 +   type (time_type),      intent(in)    :: Time
@@ -1156,8 +1612,6 @@ index 0000000..015e54b
 +!rab   type (radiation_type), intent(inout) :: Radiation
 +!rab   type (physics_type),   intent(inout) :: Physics
 +
-+  ! initialize domains for writing global physics data
-+   call set_domain ( Atm(mygrid)%domain )
 +
 +
 +!--- end nudging module ---
@@ -1179,7 +1633,6 @@ index 0000000..015e54b
 +   call atmos_global_diag_end
 +   call fv_cmip_diag_end
 +      call timing_off('FV_DIAG')
-+   call nullify_domain ( )
 +   call fv_end(Atm, mygrid)
 +   deallocate (Atm)
 +
@@ -1475,7 +1928,6 @@ index 0000000..015e54b
 +
 +   n = mygrid
 +
-+   call set_domain ( Atm(mygrid)%domain )
 +
 +!--- put u/v tendencies into haloed arrays u_dt and v_dt
 +!$OMP parallel do default(shared) private(nb, ibs, ibe, jbs, jbe)
@@ -1554,7 +2006,6 @@ index 0000000..015e54b
 +   if (query_cmip_diag_id(ID_tnhus)) &
 +                  used = send_cmip_data_3d (ID_tnhus, (Atm(mygrid)%q(isc:iec,jsc:jec,:,sphum)-qtend(:,:,:,sphum))/dt_atmos, Time)
 +
-+   call nullify_domain()
 +  !---- diagnostics for FV dynamics -----
 +   if (Atm(mygrid)%flagstruct%print_freq /= -99) then
 +     call mpp_clock_begin(id_fv_diag)
@@ -2051,19 +2502,19 @@ index 0000000..015e54b
 +#endif
 +end module atmosphere_mod
 diff --git a/model/dyn_core.F90 b/model/dyn_core.F90
-index bfce3d1..1131907 100644
+index 2245681..fca5da2 100644
 --- a/model/dyn_core.F90
 +++ b/model/dyn_core.F90
-@@ -785,7 +785,7 @@ contains
+@@ -817,7 +817,7 @@ contains
      endif
-                                                      call timing_off('d_sw')
+     call timing_off('D_SW')
  
 -    if( flagstruct%fill_dp ) call mix_dp(hydrostatic, w, delp, pt, npz, ak, bk, .false., flagstruct%fv_debug, bd, gridstruct)
 +    if( flagstruct%fill_dp ) call mix_dp(hydrostatic, w, delp, pt, npz, ak, bk, .false., flagstruct%fv_debug, bd, gridstruct,flagstruct%p_ref)
  
-                                                              call timing_on('COMM_TOTAL')
+     call timing_on('COMM_TOTAL')
      call start_group_halo_update(i_pack(1), delp, domain, complete=.false.)
-@@ -2031,9 +2031,10 @@ enddo    ! end k-loop
+@@ -2116,9 +2116,10 @@ enddo    ! end k-loop
  end subroutine grad1_p_update
  
  
@@ -2075,7 +2526,7 @@ index bfce3d1..1131907 100644
  type(fv_grid_bounds_type), intent(IN) :: bd
  real, intent(INOUT), dimension(bd%isd:bd%ied,bd%jsd:bd%jed,km):: pt, delp
  real, intent(INOUT), dimension(bd%isd:,bd%jsd:,1:):: w
-@@ -2069,14 +2070,14 @@ endif
+@@ -2154,14 +2155,14 @@ endif
  
  
  !$OMP parallel do default(none) shared(jfirst,jlast,km,ifirst,ilast,delp,ak,bk,pt, &
@@ -2092,7 +2543,7 @@ index bfce3d1..1131907 100644
        do i=ifirst, ilast
           if(.not. delp(i,j,k) >= dpmin) then ! catches NaN
  !         if(delp(i,j,k) < dpmin) then
-@@ -2093,7 +2094,7 @@ do 1000 j=jfirst,jlast
+@@ -2178,7 +2179,7 @@ do 1000 j=jfirst,jlast
     enddo
  
     ! Bottom (k=km):
@@ -2102,12 +2553,20 @@ index bfce3d1..1131907 100644
        if(.not. delp(i,j,km) >= dpmin) then ! catches NaN
  !      if(delp(i,j,km) < dpmin) then
 diff --git a/model/fv_arrays.F90 b/model/fv_arrays.F90
-index 370d02d..21d3180 100644
+index 4c11a5f..cd2c7ca 100644
 --- a/model/fv_arrays.F90
 +++ b/model/fv_arrays.F90
-@@ -58,6 +58,12 @@ module fv_arrays_mod
-      real  sphum, liq_wat, ice_wat       ! GFDL physics
-      real  rainwat, snowwat, graupel
+@@ -25,6 +25,7 @@ module fv_arrays_mod
+ #include <fms_platform.h>
+   use mpp_domains_mod,       only: domain2d
+   use fms2_io_mod,           only: FmsNetcdfFile_t, FmsNetcdfDomainFile_t
++  use fms2_io_mod,           only: FmsNetcdfFile_t, FmsNetcdfDomainFile_t
+   use time_manager_mod,      only: time_type
+   use horiz_interp_type_mod, only: horiz_interp_type
+   use mpp_mod,               only: mpp_broadcast
+@@ -63,6 +64,12 @@ module fv_arrays_mod
+      integer :: id_ws, id_te, id_amdt, id_divg_mean, id_divg, id_aam
+      logical :: initialized = .false.
  
 +#ifdef MARS_GCM
 +     integer ::  id_t05
@@ -2118,7 +2577,7 @@ index 370d02d..21d3180 100644
       real :: efx(max_step), efx_sum, efx_nest(max_step), efx_sum_nest, mtq(max_step), mtq_sum
       integer :: steps
  
-@@ -624,6 +630,13 @@ module fv_arrays_mod
+@@ -645,6 +652,13 @@ module fv_arrays_mod
                                      !< conditions, instead of nudging the temperature back to the initial value.
                                      !< Nudging delz is simpler (faster), doesn’t require consideration of the
                                      !< virtual temperature effect, and may be more stable. .false.by default.
@@ -2132,7 +2591,7 @@ index 370d02d..21d3180 100644
     real    :: p_ref = 1.E5   !< Surface pressure used to construct a horizontally-uniform reference
                               !< vertical pressure profile, used in some simple physics packages
                               !< in the solo_core and in the Rayleigh damping. This should not be
-@@ -634,6 +647,7 @@ module fv_arrays_mod
+@@ -655,6 +669,7 @@ module fv_arrays_mod
                                   !< measured in the globally-averaged surface pressure (Pascals) by adding
                                   !< or removing mass from the lowest layer of the atmosphere as needed.
                                   !< The default value is 98290. (Pa).
@@ -2140,30 +2599,39 @@ index 370d02d..21d3180 100644
     integer :: nt_prog = 0
     integer :: nt_phys = 0
     real    :: tau_h2o = 0.  !< Time-scale (days) for simple methane chemistry to act as
-@@ -703,7 +717,7 @@ module fv_arrays_mod
+@@ -731,7 +746,7 @@ module fv_arrays_mod
     logical :: fill_gfs = .true. ! default behavior
     logical :: check_negative = .false.   !< Whether to print the most negativ global value of microphysical tracers.
     logical :: non_ortho = .true.
--   logical :: moist_phys = .true.     !< Run with moist physics
-+   logical :: moist_phys = .false.     !< Run with moist physics
-    logical :: do_Held_Suarez = .false.   !< Whether to use Held-Suarez forcing. Requires adiabatic
-                                          !< to be false. The default is .false.; this option has no
-                                          !< effect if not running solo_core.
+-   logical :: moist_phys = .true.     !< Run with moist physics. This is *only* false in idealized (solo_core)
++   logical :: moist_phys = .false.     !< Run with moist physics. This is *only* false in idealized (solo_core)
+                                       !< simulations with adiabatic = .true. or in a held_suarez simulation. When false,
+                                       !< the virtual temperature effect is disabled, the moist effect in total energy
+                                       !< is neglected, and water species are treated as passive tracers.
 diff --git a/model/fv_control.F90 b/model/fv_control.F90
-index 6766da8..e3479ab 100644
+index 0fd48ea..e6b1d30 100644
 --- a/model/fv_control.F90
 +++ b/model/fv_control.F90
-@@ -64,6 +64,9 @@ module fv_control_mod
-                                   mpp_max
-    use fv_diagnostics_mod,  only: fv_diag_init_gn
+@@ -35,6 +35,8 @@ module fv_control_mod
+    use field_manager_mod,   only: MODEL_ATMOS
+    use fms_mod,             only: write_version_number, check_nml_error
+    use fms2_io_mod,         only: file_exists
++   use fms_mod,             only: write_version_number, check_nml_error
++   use fms2_io_mod,         only: file_exists
+    use mpp_mod,             only: FATAL, mpp_error, mpp_pe, stdlog, &
+                                   mpp_npes, mpp_get_current_pelist, &
+                                   input_nml_file, get_unit, WARNING, &
+@@ -70,6 +72,9 @@ module fv_control_mod
     use coarse_grained_restart_files_mod, only: deallocate_coarse_restart_type
+    use tp_core_mod,         only: tp_mono_schemes, tp_PD_schemes, tp_unlim_schemes, tp_valid_schemes
+    use fv_thermodynamics_mod, only: fv_thermo_init
 +#ifdef MARS_GCM
 +   use init_hydro_mod,      only: isotemp, do_isothermal  !Urata 2/6/2019
 +#endif
  
     implicit none
     private
-@@ -213,8 +216,15 @@ module fv_control_mod
+@@ -224,8 +229,15 @@ module fv_control_mod
  
       integer , pointer :: na_init
       logical , pointer :: nudge_dz
@@ -2179,7 +2647,7 @@ index 6766da8..e3479ab 100644
       integer , pointer :: nt_prog
       integer , pointer :: nt_phys
       real    , pointer :: tau_h2o
-@@ -755,6 +765,10 @@ module fv_control_mod
+@@ -762,6 +774,10 @@ module fv_control_mod
         sg_cutoff                     => Atm%flagstruct%sg_cutoff
         na_init                       => Atm%flagstruct%na_init
         nudge_dz                      => Atm%flagstruct%nudge_dz
@@ -2190,53 +2658,40 @@ index 6766da8..e3479ab 100644
         p_ref                         => Atm%flagstruct%p_ref
         dry_mass                      => Atm%flagstruct%dry_mass
         nt_prog                       => Atm%flagstruct%nt_prog
-@@ -929,6 +943,9 @@ module fv_control_mod
-             tau, tau_h2o, rf_cutoff, nf_omega, hydrostatic, fv_sg_adj, sg_cutoff, breed_vortex_inline,  &
+@@ -944,6 +960,9 @@ module fv_control_mod
+             sg_cutoff, breed_vortex_inline,  &
              na_init, nudge_dz, hybrid_z, Make_NH, n_zs_filter, nord_zs_filter, full_zs_filter, reset_eta,         &
-             pnats, dnats, dnrts, a2b_ord, remap_t, p_ref, d2_bg_k1, d2_bg_k2,  &
+             pnats, dnats, dnrts, remap_t, p_ref, d2_bg_k1, d2_bg_k2,  &
 +#ifdef MARS_GCM
 +            sponge_damp, reference_sfc_pres, moist_phys,                    &
 +#endif
-             c2l_ord, dx_const, dy_const, umax, deglat,      &
+             dx_const, dy_const, umax, deglat, domain_deg,     &
              deglon_start, deglon_stop, deglat_start, deglat_stop, &
-             phys_hydrostatic, use_hydro_pressure, make_hybrid_z, old_divg_damp, add_noise, &
-@@ -941,13 +958,34 @@ module fv_control_mod
-             write_only_coarse_intermediate_restarts, &
-             write_coarse_agrid_vel_rst, write_coarse_dgrid_vel_rst
+             phys_hydrostatic, use_hydro_pressure, make_hybrid_z, add_noise, &
+@@ -958,13 +977,21 @@ module fv_control_mod
+             restart_from_agrid_winds, write_optional_dgrid_vel_rst, &
+             pass_full_omega_to_physics_in_non_hydrostatic_mode, ignore_rst_cksum
  
 +#ifdef MARS_GCM
 +!  new namelist for mars atmosphere init Urata 2/6/2019
 +       namelist /mars_iso_nml/isotemp,do_isothermal
-+
+ 
 +       isotemp = 170.  !was 200 originally
 +       do_isothermal = .true.
 +#endif
- 
-+#ifdef INTERNAL_FILE_NML
         ! Read FVCORE namelist
         read (input_nml_file,fv_core_nml,iostat=ios)
         ierr = check_nml_error(ios,'fv_core_nml')
         ! Reset input_file_nml to default behavior (CHECK do we still need this???)
         !call read_input_nml
-- 
+-
 +       ! Read Mars atmosphere init conds
 +       read (input_nml_file,mars_iso_nml,iostat=ios)
 +       ierr = check_nml_error(ios,'mars_iso_nml')
-+#else
-+       f_unit = open_namelist_file(Atm%nml_filename)
-+       ! Read FVCORE namelist
-+       read (f_unit,fv_core_nml,iostat=ios)
-+       ierr = check_nml_error(ios,'fv_core_nml')
-+       ! Read Mars atmosphere init conds
-+       rewind (f_unit)
-+       read (f_unit,mars_iso_nml,iostat=ios)
-+       ierr = check_nml_error(ios,'mars_iso_nml')
-+       call close_file(f_unit)
-+#endif
         call write_version_number ( 'FV_CONTROL_MOD', version )
         unit = stdlog()
         write(unit, nml=fv_core_nml)
-@@ -967,6 +1005,9 @@ module fv_control_mod
+@@ -984,6 +1011,9 @@ module fv_control_mod
         ! Define n_split if not in namelist
         if (ntiles==6) then
            dimx = 4.0*(npx-1)
@@ -2246,7 +2701,7 @@ index 6766da8..e3479ab 100644
            if ( hydrostatic ) then
               if ( npx >= 120 ) ns0 = 6
            else
-@@ -978,6 +1019,7 @@ module fv_control_mod
+@@ -995,6 +1025,7 @@ module fv_control_mod
                  ns0 = 8
               endif
            endif
@@ -2255,102 +2710,46 @@ index 6766da8..e3479ab 100644
            dimx = max ( npx, 2*(npy-1) )
         endif
 diff --git a/model/fv_grid_utils.F90 b/model/fv_grid_utils.F90
-index 9e15085..df044da 100644
+index 06a176c..6edcfea 100644
 --- a/model/fv_grid_utils.F90
 +++ b/model/fv_grid_utils.F90
-@@ -192,7 +192,11 @@
+@@ -196,7 +196,11 @@
        elseif ( .not. Atm%flagstruct%hybrid_z ) then
  ! Initialize (ak,bk) for cold start; overwritten with restart file
             if (.not. Atm%flagstruct%external_eta) then
 +#ifndef MARS_GCM
-               call set_eta(npz, Atm%ks, Atm%ptop, Atm%ak, Atm%bk, Atm%flagstruct%npz_type)
+               call set_eta(npz, Atm%ks, Atm%ptop, Atm%ak, Atm%bk, Atm%flagstruct%npz_type, Atm%flagstruct%fv_eta_file)
 +#else
 +              call set_eta(npz, Atm%ks, Atm%ptop, Atm%ak, Atm%bk, Atm%flagstruct%p_ref)
 +#endif
                if ( is_master() ) then
-                  write(*,*) 'Grid_init', npz, Atm%ks, Atm%ptop
+                  !write(*,*) 'Grid_init', npz, Atm%ks, Atm%ptop
                   tmp1 = Atm%ak(Atm%ks+1)
-diff --git a/model/fv_mapz.F90 b/model/fv_mapz.F90
-index e89b48d..ad0b9c0 100644
---- a/model/fv_mapz.F90
-+++ b/model/fv_mapz.F90
-@@ -33,7 +33,9 @@ module fv_mapz_mod
-   use fv_arrays_mod,     only: fv_grid_type, fv_grid_bounds_type, R_GRID, inline_mp_type
-   use fv_timing_mod,     only: timing_on, timing_off
-   use fv_mp_mod,         only: is_master, mp_reduce_min, mp_reduce_max
-+#ifndef MARS_GCM
-   use fv_cmp_mod,        only: qs_init, fv_sat_adj
-+#endif
- 
-   implicit none
-   real, parameter:: consv_min = 0.001   ! below which no correction applies
-@@ -172,6 +174,7 @@ contains
-        cld_amt = get_tracer_index (MODEL_ATMOS, 'cld_amt')
-        ccn_cm3 = get_tracer_index (MODEL_ATMOS, 'ccn_cm3')
- 
-+#ifndef MARS_GCM
-        if ( do_adiabatic_init .or. do_sat_adj ) then
-             fast_mp_consv = (.not.do_adiabatic_init) .and. consv>consv_min
-             do k=1,km
-@@ -180,6 +183,7 @@ contains
-             enddo
-             call qs_init(kmp)
+diff --git a/model/fv_nesting.F90 b/model/fv_nesting.F90
+index 3b82ec4..d9ab9c7 100644
+--- a/model/fv_nesting.F90
++++ b/model/fv_nesting.F90
+@@ -391,6 +391,7 @@ contains
         endif
-+#endif
  
- !$OMP parallel do default(none) shared(is,ie,js,je,km,pe,ptop,kord_tm,hydrostatic, &
- !$OMP                                  pt,pk,rg,peln,q,nwat,liq_wat,rainwat,ice_wat,snowwat,    &
-@@ -648,6 +652,7 @@ if( last_step .and. (.not.do_adiabatic_init)  ) then
-   endif        ! end consv check
- endif        ! end last_step check
- 
-+#ifndef MARS_GCM
- ! Note: pt at this stage is T_v
- ! if ( (.not.do_adiabatic_init) .and. do_sat_adj ) then
-   if (do_adiabatic_init .or. do_sat_adj) then
-@@ -692,6 +697,7 @@ endif        ! end last_step check
- 
-                                            call timing_off('sat_adj2')
-   endif   ! do_sat_adj
-+#endif
- 
-   if ( last_step ) then
-        ! Output temperature if last_step
+        sphum = get_tracer_index (MODEL_ATMOS, 'sphum')
++       sphum = max(1,sphum)
+        if (flagstruct%hydrostatic) then
+           if (.not. neststruct%do_remap_BC(flagstruct%grid_number)) then
+             call allocate_fv_nest_BC_type(pe_eul_BC,is,ie,js,je,isd,ied,jsd,jed,npx,npy,npz+1,ng,0,0,0,.false.)
 diff --git a/model/fv_sg.F90 b/model/fv_sg.F90
-index f1f5ee4..b82a3de 100644
+index b47ba84..3decf99 100644
 --- a/model/fv_sg.F90
 +++ b/model/fv_sg.F90
-@@ -26,21 +26,22 @@ module fv_sg_mod
-   use constants_mod,      only: rdgas, rvgas, cp_air, cp_vapor, hlv, hlf, kappa, grav
-   use tracer_manager_mod, only: get_tracer_index
+@@ -33,7 +33,6 @@ module fv_sg_mod
    use field_manager_mod,  only: MODEL_ATMOS
--  use gfdl_cloud_microphys_mod, only: wqs1, wqs2, wqsat2_moist
-+#ifndef MARS_GCM
-+  use lin_cld_microphys_mod, only: wqs2, wqsat2_moist
-+#endif
+   use gfdl_mp_mod,        only: wqs, mqs3d, c_liq, c_ice
    use fv_mp_mod,          only: mp_reduce_min, is_master
 -  use mpp_mod,            only: mpp_pe
  
  implicit none
  private
- 
--public  fv_subgrid_z, qsmith, neg_adj3
-+public  fv_subgrid_z, qsmith, neg_adj3, fv_dry_conv
- 
-   real, parameter:: esl = 0.621971831
-   real, parameter:: tice = 273.16
--  real, parameter:: c_ice = 2106.  ! Emanuel table, page 566
--! real, parameter:: c_ice = 1972.  !  -15 C
--! real, parameter:: c_liq = 4.1855e+3    ! GFS
--  real, parameter:: c_liq = 4218.        ! ECMWF-IFS
-+! real, parameter:: c_ice = 2106.  ! Emanuel table, page 566
-+  real, parameter:: c_ice = 1972.  !  -15 C
-+  real, parameter:: c_liq = 4.1855e+3    ! GFS
-+! real, parameter:: c_liq = 4218.        ! ECMWF-IFS
-   real, parameter:: cv_vap = cp_vapor - rvgas  ! 1384.5
-   real, parameter:: c_con = c_ice
- 
-@@ -82,7 +83,7 @@ contains
+@@ -86,7 +85,7 @@ contains
        real, intent(in)::   pe(is-1:ie+1,km+1,js-1:je+1)
        real, intent(in):: peln(is  :ie,  km+1,js  :je)
        real, intent(in):: delp(isd:ied,jsd:jed,km)      ! Delta p at each model level
@@ -2358,8 +2757,8 @@ index f1f5ee4..b82a3de 100644
 +      real, intent(in):: delz(isd:,jsd:,1:)      ! Delta z at each model level
        real, intent(in)::  pkz(is:ie,js:je,km)
        logical, intent(in)::  hydrostatic
-       integer, intent(in), optional:: k_bot
-@@ -311,7 +312,7 @@ contains
+       integer, intent(in), optional:: k_bot_full
+@@ -323,7 +322,7 @@ contains
  ! top layer unphysically warm
                 ri = 0.
              elseif ( tv2<t_min ) then
@@ -2368,7 +2767,7 @@ index f1f5ee4..b82a3de 100644
              endif
  ! Adjustment for K-H instability:
  ! Compute equivalent mass flux: mc
-@@ -509,7 +510,7 @@ contains
+@@ -516,7 +515,7 @@ enddo
        real, intent(in)::   pe(is-1:ie+1,km+1,js-1:je+1)
        real, intent(in):: peln(is  :ie,  km+1,js  :je)
        real, intent(in):: delp(isd:ied,jsd:jed,km)      ! Delta p at each model level
@@ -2377,16 +2776,15 @@ index f1f5ee4..b82a3de 100644
        real, intent(in)::  pkz(is:ie,js:je,km)
        logical, intent(in)::  hydrostatic
     integer, intent(in), optional:: k_bot
-@@ -882,7 +883,7 @@ contains
- !----------------------
- ! Saturation adjustment
- !----------------------
--#ifndef GFS_PHYS
-+#ifndef MARS_GCM
-   if ( nwat > 5 ) then
-     do k=1, kbot
-       if ( hydrostatic ) then
-@@ -1122,7 +1123,7 @@ contains
+@@ -560,6 +559,7 @@ enddo
+       endif
+ 
+       sphum = get_tracer_index (MODEL_ATMOS, 'sphum')
++      sphum = MAX(sphum, 1)
+       if ( nwat == 0 ) then
+          xvir = 0.
+          rz = 0.
+@@ -972,7 +972,7 @@ enddo
   integer, intent(in):: is, ie, js, je, ng, kbot
   logical, intent(in):: hydrostatic
   real, intent(in):: dp(is-ng:ie+ng,js-ng:je+ng,kbot)  ! total delp-p
@@ -2395,7 +2793,7 @@ index f1f5ee4..b82a3de 100644
   real, intent(in):: peln(is:ie,kbot+1,js:je)           ! ln(pe)
   logical, intent(in), OPTIONAL :: check_negative
   real, intent(inout), dimension(is-ng:ie+ng,js-ng:je+ng,kbot)::    &
-@@ -1301,7 +1302,7 @@ real, dimension(is:ie,js:je):: pt2, qv2, ql2, qi2, qs2, qr2, qg2, dp2, p2, icpk,
+@@ -1153,7 +1153,7 @@ real, dimension(is:ie,js:je):: pt2, qv2, ql2, qi2, qs2, qr2, qg2, dp2, p2, icpk,
  !******************************************
  ! Fast moist physics: Saturation adjustment
  !******************************************
@@ -2404,7 +2802,7 @@ index f1f5ee4..b82a3de 100644
   if ( sat_adj ) then
  
     do j=js, je
-@@ -1465,21 +1466,8 @@ real, dimension(is:ie,js:je):: pt2, qv2, ql2, qi2, qs2, qr2, qg2, dp2, p2, icpk,
+@@ -1317,21 +1317,8 @@ real, dimension(is:ie,js:je):: pt2, qv2, ql2, qi2, qs2, qr2, qg2, dp2, p2, icpk,
          qa(i,j,kbot) = max(0., qa(i,j,kbot))
     enddo
   enddo
@@ -2426,17 +2824,7 @@ index f1f5ee4..b82a3de 100644
   end subroutine neg_adj3
  
   subroutine fillq(im, km, q, dp)
-@@ -1531,9 +1519,6 @@ real, dimension(is:ie,js:je):: pt2, qv2, ql2, qi2, qs2, qr2, qg2, dp2, p2, icpk,
-       do j=js,je
-          do i=is,ie
-             qmin = min(qmin, q(i,j,k))
--!!$            if (q(i,j,k) < threshold) then
--!!$               print*, mpp_pe(), " Negative found in ", trim(qname), i, j, k, q(i,j,k)
--!!$            endif
-          enddo
-       enddo
-       enddo
-@@ -1543,4 +1528,265 @@ real, dimension(is:ie,js:je):: pt2, qv2, ql2, qi2, qs2, qr2, qg2, dp2, p2, icpk,
+@@ -1392,4 +1379,265 @@ real, dimension(is:ie,js:je):: pt2, qv2, ql2, qi2, qs2, qr2, qg2, dp2, p2, icpk,
   end subroutine prt_negative
  
  
@@ -2703,10 +3091,10 @@ index f1f5ee4..b82a3de 100644
 +
  end module fv_sg_mod
 diff --git a/model/fv_update_phys.F90 b/model/fv_update_phys.F90
-index d3672de..19f846f 100644
+index cdeba07..240cacf 100644
 --- a/model/fv_update_phys.F90
 +++ b/model/fv_update_phys.F90
-@@ -274,6 +274,22 @@ module fv_update_phys_mod
+@@ -277,6 +277,22 @@ module fv_update_phys_mod
  
         if (present(q_dt)) then
  
@@ -2729,7 +3117,7 @@ index d3672de..19f846f 100644
         if (flagstruct%tau_h2o<0.0 .and. pfull(k) < 100.E2 ) then
  ! Wipe the stratosphere clean:
  ! This should only be used for initialization from a bad model state
-@@ -358,7 +374,7 @@ module fv_update_phys_mod
+@@ -369,7 +385,7 @@ module fv_update_phys_mod
            endif
          enddo
        endif
@@ -2739,10 +3127,10 @@ index d3672de..19f846f 100644
  
        if ( hydrostatic ) then
 diff --git a/tools/fv_diagnostics.F90 b/tools/fv_diagnostics.F90
-index bcf0643..51f7c54 100644
+index 8a2446d..e46d62c 100644
 --- a/tools/fv_diagnostics.F90
 +++ b/tools/fv_diagnostics.F90
-@@ -51,6 +51,30 @@ module fv_diagnostics_mod
+@@ -58,6 +58,31 @@ module fv_diagnostics_mod
  
   use fv_diag_column_mod, only: fv_diag_column_init, sounding_column, debug_column
  
@@ -2752,46 +3140,72 @@ index bcf0643..51f7c54 100644
 +                               gascol
 +#endif
 +
-+ use initracer_mod, only: ndust_mass, ntrace_gas, gas_indx
-+ use aerosol_util_mod, only: do_moment_micro
++ use initracer_mod, only: ndust_mass, ntrace_gas, gas_indx, nice_mass
++ use aerosol_util_mod, only: do_moment_dust, do_moment_water
 +
 +#ifndef RELEASE
 + use dust_update_mod, only: sfc_dust_mass, tcol_mass, tcol_core, dust_surf_ini
 +#endif
 +
 +#if defined(MARS_SURFACE)
-+ use mars_surface_mod,     only:  sfc_snow, sfc_frost
++ use mars_surface_mod,     only:  sfc_snow, sfc_frost, sfc_frost_mom
 +#ifndef RELEASE
 + use dust_source_mod,      only:  sfc_dust, odcol
 + use aerosol_mod,          only:  ndust_bins, nice_bins, nice_moms, aerosol_bins, &
 +                                  dust_indx, ice_bin_indx, ice_mom_indx
 +
 + use cloud_physics_mod,   only:  cldcol, wcol
++ use micromod_mgcm,       only:  wcldcol, wcol_mom=>wcol
 +#endif
 +#endif
 +#endif MARS_GDIAGS
   implicit none
   private
  
-@@ -113,6 +137,10 @@ module fv_diagnostics_mod
+@@ -137,10 +162,15 @@ module fv_diagnostics_mod
+  real, allocatable :: zsurf(:,:)
+  real, allocatable :: pt1(:)
  
-  real              :: vrange(2), vsrange(2), wrange(2), trange(2), slprange(2), rhrange(2)
- 
-+#ifdef MARS_GCM
-+  integer ::  id_tkd, id_ukd, id_vkd, id_t5mb, id_u5mb, id_v5mb
-+#endif
++!  integer ::  id_tkd, id_ukd, id_vkd, id_t5mb, id_u5mb, id_v5mb, id_t2km, id_u2km, id_v2km
++  integer ::  lev_2km
++  real :: scale_hgt = 10.0    ! standard scale height in km
++  real :: p2km
 +
   ! integer :: id_d_grid_ucomp, id_d_grid_vcomp   ! D grid winds
   ! integer :: id_c_grid_ucomp, id_c_grid_vcomp   ! C grid winds
  
-@@ -194,12 +222,21 @@ contains
-     vrange = (/ -330.,  330. /)  ! winds
+- namelist /fv_diag_plevs_nml/ nplev, levs, levs_ave, k100, k200, k500
++ namelist /fv_diag_plevs_nml/ nplev, levs, levs_ave, k100, k200, k500, scale_hgt
+ 
+ ! version number of this module
+ ! Include variable "version" to be written to log file.
+@@ -205,8 +235,11 @@ contains
+ 
+     ncnst = Atm(1)%ncnst
+     m_calendar = Atm(1)%flagstruct%moist_phys
+-
++#ifdef MARS_GCM
++    sphum   = 1
++#else
+     sphum   = get_tracer_index (MODEL_ATMOS, 'sphum')
++#endif
+     liq_wat = get_tracer_index (MODEL_ATMOS, 'liq_wat')
+     ice_wat = get_tracer_index (MODEL_ATMOS, 'ice_wat')
+ 
+@@ -223,13 +256,23 @@ contains
+ 
+     vsrange = (/ -200.,  200. /)  ! surface (lowest layer) winds
+ 
+-    vrange = (/ -330.,  330. /)  ! winds
++    vrange = (/ -400.,  400. /)  ! winds
      wrange = (/ -100.,  100. /)  ! vertical wind
     rhrange = (/  -10.,  150. /)  ! RH
 +
 +#if defined(MARS_GCM)
-+    slprange = (/0.,  100./)  ! sea-level-pressure
++    slprange = (/0.,  10000./)  ! sea-level-pressure
 +    trange = (/  50., 360. /)  ! temperature
++    psrange = (/0.,  1000000./)
++    skrange = (/ -10000000.0,  10000000.0 /)
 +#elif defined(VENUS_GCM)
 +    trange = (/  100.,  900. /)  ! temperature
 +    slprange = (/80.E3,  98.E3/)  ! sea-level-pressure
@@ -2803,11 +3217,27 @@ index bcf0643..51f7c54 100644
 +    trange = (/  100.,  400. /)  ! temperature
  #endif
      slprange = (/800.,  1200./)  ! sea-level-pressure
-+#endif
+     skrange  = (/ -10000000.0,  10000000.0 /)  ! dissipation estimate for SKEB
+@@ -238,13 +281,17 @@ contains
+ #else
+     psrange = (/40000.0, 110000.0/)
+ #endif
++#endif MARS_GCM
  
      ginv = 1./GRAV
-      if (Atm(1)%grid_number == 1) fv_time = Time
-@@ -282,7 +319,7 @@ contains
+-     if (Atm(1)%grid_number == 1) fv_time = Time
++    if (Atm(1)%grid_number == 1) fv_time = Time
+ 
+     allocate ( phalf(npz+1) )
+     call get_eta_level(Atm(1)%npz, p_ref, pfull, phalf, Atm(1)%ak, Atm(1)%bk, 0.01)
+ 
++    p2km = p_ref*exp(-2/scale_hgt)
++    lev_2km = minloc(abs(pfull(:)*100.-p2km),1)
++    
+     mp_top = 1
+     do k=1,npz
+        if ( pfull(k) > 30.e2 ) then
+@@ -325,7 +372,7 @@ contains
           'vertical coordinate sigma value', 'none' )
  
      id_pk    = register_static_field ( "dynamics", 'pk', (/id_phalf/), &
@@ -2816,10 +3246,10 @@ index bcf0643..51f7c54 100644
  
      id_hyam    = register_static_field ( "dynamics", 'hyam', (/id_pfull/), &
           'vertical coordinate A value', '1E-5 Pa' )
-@@ -1010,9 +1047,38 @@ contains
-                 'Echo top ( <= 18.5 dBz )', 'm', missing_value=missing_value2)
-        id_dbz_m10C = register_diag_field ( trim(field), 'm10C_reflectivity', axes(1:2), time, &
+@@ -1268,9 +1315,47 @@ contains
                  'Reflectivity at -10C level', 'm', missing_value=missing_value)
+        id_40dbzht = register_diag_field ( trim(field), '40dBz_height', axes(1:2), time, &
+                 'Height of 40 dBz reflectivity', 'm', missing_value=missing_value)
 +#ifdef MARS_GCM
 +!--------------------------
 +! Extra Martian diagnostics:
@@ -2848,6 +3278,15 @@ index bcf0643..51f7c54 100644
 +       idiag%id_v5mb = register_diag_field ( trim(field), 'v5mb', axes(1:2), Time,       &
 +               '5.0-mb V velocity', 'm/s', missing_value=missing_value )
 +
++       id_t2km= register_diag_field( trim(field), 't2km', axes(1:2), Time, &
++            '2km temperatures', 'K', missing_value=missing_value )
++
++       id_u2km= register_diag_field( trim(field), 'u2km', axes(1:2), Time, &
++            '2km U velocity', 'm/s', missing_value=missing_value )
++
++       id_v2km= register_diag_field( trim(field), 'v2km', axes(1:2), Time, &
++            '2km V velocity', 'm/s', missing_value=missing_value )
++
 +#endif MARS_GCM
  
  !--------------------------
@@ -2856,7 +3295,7 @@ index bcf0643..51f7c54 100644
  !--------------------------
  ! Surface (lowest layer) vorticity: for tropical cyclones diag.
         id_vorts = register_diag_field ( trim(field), 'vorts', axes(1:2), Time,       &
-@@ -1421,6 +1487,11 @@ contains
+@@ -1621,6 +1706,12 @@ contains
      real :: tmp2, pvsum, e2, einf, qm, mm, maxdbz, allmax, rgrav, cv_vapor
      real, allocatable :: cvm(:)
      integer :: Cl, Cl2, k1, k2
@@ -2864,11 +3303,12 @@ index bcf0643..51f7c54 100644
 +    real  ::   atm_mass,  sfc_mass, atm_cloud
 +    real  ::   tsfc_dust_bin, tcol_dust_bin
 +    real  ::   gdust_mass_sfc, gdust_mass_col, gdust_mass_cor
++    real  ::   gwat_mass_sfc, gwat_mass_vap, gwat_mass_cld
 +#endif
  
      !!! CLEANUP: does it really make sense to have this routine loop over Atm% anymore? We assume n=1 below anyway
  
-@@ -1464,7 +1535,14 @@ contains
+@@ -1664,7 +1755,14 @@ contains
      fv_time = Time
  
      if ( m_calendar ) then
@@ -2883,7 +3323,7 @@ index bcf0643..51f7c54 100644
           if( print_freq == 0 ) then
                   prt_minmax = .false.
           elseif( print_freq < 0 ) then
-@@ -1499,11 +1577,15 @@ contains
+@@ -1699,11 +1797,15 @@ contains
       endif
  
       if(prt_minmax) then
@@ -2891,20 +3331,27 @@ index bcf0643..51f7c54 100644
 +        if(master) write(*,*) 'Sol =', Days, '   sec =', seconds
 +#else
           if ( m_calendar ) then
-               if(master) write(*,*) yr, mon, dd, hr, mn, seconds
+               if(master) write(*,'(A,I6,5I3)') ' Simulation Time: ', yr, mon, dd, hr, mn, seconds
           else
-               if(master) write(*,*) Days, seconds
+               if(master) write(*,'(A,2I5)') ' Simulation Time: ', Days, seconds
           endif
 +#endif
       endif
  
      allocate ( a2(isc:iec,jsc:jec) )
-@@ -1590,6 +1672,73 @@ contains
- !       call prt_maxmin('Top: TA', Atm(n)%pt(isc:iec,jsc:jec,  1), isc, iec, jsc, jec, 0, 1, 1.)
- !       call prt_maxmin('Bot: TA', Atm(n)%pt(isc:iec,jsc:jec,npz), isc, iec, jsc, jec, 0, 1, 1.)
-         call prt_maxmin('OM', Atm(n)%omga, isc, iec, jsc, jec, ngc, npz, 1.)
-+#endif
-+
+@@ -1715,7 +1817,7 @@ contains
+                       Atm(n)%ps, Atm(n)%delp, Atm(n)%q, Atm(n)%gridstruct%area_64, Atm(n)%domain)
+ 
+         !call prt_mxm('ZS (m) ', zsurf,     isc, iec, jsc, jec, 0,   1, 1.0, Atm(n)%gridstruct%area_64, Atm(n)%domain)
+-        call prt_mxm('PS (Pa) ', Atm(n)%ps, isc, iec, jsc, jec, ngc, 1, 0.01, Atm(n)%gridstruct%area_64, Atm(n)%domain, PRT_LEVEL_1)
++        call prt_mxm('PS (mb) ', Atm(n)%ps, isc, iec, jsc, jec, ngc, 1, 0.01, Atm(n)%gridstruct%area_64, Atm(n)%domain, PRT_LEVEL_1)
+ 
+ #ifdef HIWPP
+         if (.not. Atm(n)%gridstruct%bounded_domain ) then
+@@ -1791,6 +1893,88 @@ contains
+         call prt_mxm('OM (pa/s)', Atm(n)%omga, isc, iec, jsc, jec, ngc, npz, 1., Atm(n)%gridstruct%area_64, Atm(n)%domain, PRT_LEVEL_2)
+ #endif
+ 
 +#if defined(MARS_GCM) && defined(MARS_SURFACE)
 +#ifdef MARS_GDIAGS
 +
@@ -2954,7 +3401,7 @@ index bcf0643..51f7c54 100644
 +       enddo
 +    endif
 +
-+    if( do_moment_micro ) then
++    if( do_moment_dust ) then
 +       do k= 1, ndust_mass
 +        gdust_mass_sfc = g_sum( Atm(n)%domain, sfc_dust_mass(:,:,k),isc, iec, jsc, jec, ngc, Atm(n)%gridstruct%area,mode=1)
 +        gdust_mass_col = g_sum( Atm(n)%domain, tcol_mass(:,:,k),isc, iec, jsc, jec, ngc, Atm(n)%gridstruct%area,mode=1)
@@ -2966,32 +3413,49 @@ index bcf0643..51f7c54 100644
 +
 +       enddo
 +     endif
++     if (do_moment_water ) then
++       do k=1,nice_mass
++        gwat_mass_sfc = g_sum(Atm(n)%domain, sfc_frost_mom(:,:,k),isc, iec, jsc, jec, ngc, Atm(n)%gridstruct%area,mode=1)
++        gwat_mass_vap = g_sum(Atm(n)%domain, wcol_mom(:,:,k),isc, iec, jsc, jec, ngc, Atm(n)%gridstruct%area,mode=1)
++        gwat_mass_cld = g_sum(Atm(n)%domain, wcldcol(:,:,k),isc, iec, jsc, jec, ngc, Atm(n)%gridstruct%area,mode=1)
++        gwat_mass_sfc = gwat_mass_sfc - 4.08784327401307  !4.08 is the initial global mean surface ice
++        if(master) write(*,*) 'Water balance for water mom tracer ',  k
++        if(master) write(*,*) 'Atm_mom H2o vapor (kg/m**2)', trim(gn), ' =', gwat_mass_vap
++        if(master) write(*,*) 'Atm_mom H2o cloud (kg/m**2)', trim(gn), ' =', gwat_mass_cld
++        if(master) write(*,*) 'Total Atm_mom H2o', trim(gn), ' ', gwat_mass_cld + gwat_mass_vap
++
++        if(master) write(*,*) 'H2O sfc_mom frost (kg/m**2)', trim(gn), ' ==', gwat_mass_sfc
++        if(master) write(*,*) 'Total H2O_mom inventory', trim(gn), ' =', gwat_mass_cld + gwat_mass_vap + gwat_mass_sfc
++       enddo
++     endif
 +#endif
 +
 +#endif MARS_GDIAGS
 +
- #endif
- 
++#endif MARS_GCM
++
      elseif ( Atm(n)%flagstruct%range_warn ) then
-@@ -2144,7 +2293,7 @@ contains
+          if (ptop < 200.e2) call range_check('DELP', Atm(n)%delp, isc, iec, jsc, jec, ngc, npz, Atm(n)%gridstruct%agrid,    &
+                                               0.01*ptop, 200.E2, bad_range, Time)
+@@ -2319,7 +2503,7 @@ contains
  
            allocate ( wz(isc:iec,jsc:jec,npz+1) )
            call get_height_field(isc, iec, jsc, jec, ngc, npz, Atm(n)%flagstruct%hydrostatic, Atm(n)%delz,  &
 -                                wz, Atm(n)%pt, Atm(n)%q, Atm(n)%peln, zvir)
 +                                wz, Atm(n)%pt, Atm(n)%q, Atm(n)%peln, zvir, Atm(n)%flagstruct%moist_phys)
            if( prt_minmax )   &
-           call prt_mxm('ZTOP',wz(isc:iec,jsc:jec,1), isc, iec, jsc, jec, 0, 1, 1.E-3, Atm(n)%gridstruct%area_64, Atm(n)%domain)
- !         call prt_maxmin('ZTOP', wz(isc:iec,jsc:jec,1), isc, iec, jsc, jec, 0, 1, 1.E-3)
-@@ -2385,7 +2534,7 @@ contains
-        if (.not. allocated(wz)) allocate ( wz(isc:iec,jsc:jec,npz+1) )
+           call prt_mxm('ZTOP (m)',wz(isc:iec,jsc:jec,1), isc, iec, jsc, jec, 0, 1, 1.E-3, Atm(n)%gridstruct%area_64, Atm(n)%domain, PRT_LEVEL_1)
  
+@@ -2562,7 +2746,7 @@ contains
+        !Height calculation no longer needed??
+        if (.not. allocated(wz)) allocate ( wz(isc:iec,jsc:jec,npz+1) )
         call get_height_field(isc, iec, jsc, jec, ngc, npz, Atm(n)%flagstruct%hydrostatic, Atm(n)%delz,  &
 -                             wz, Atm(n)%pt, Atm(n)%q, Atm(n)%peln, zvir)
 +                             wz, Atm(n)%pt, Atm(n)%q, Atm(n)%peln, zvir, Atm(n)%flagstruct%moist_phys)
  
-        if ( do_cs_intp ) then  ! log(pe) as the coordinaite for temp re-construction
+        if ( do_cs_intp ) then  ! log(pe) as the coordinate for temp re-construction
            if(.not. allocated (a3) ) allocate( a3(isc:iec,jsc:jec,nplev) )
-@@ -2470,9 +2619,50 @@ contains
+@@ -2647,9 +2831,54 @@ contains
            endif
         endif
  
@@ -3018,9 +3482,13 @@ index bcf0643..51f7c54 100644
 +            used=send_data(idiag%id_v5mb, a2, Time)
 +       endif
 +
-+       if( id_tkd > 0 )  used= send_data( id_tkd, ATm(n)%pt(isc:iec,jsc:jec,npz), Time )
-+       if( id_ukd > 0 )  used= send_data( id_ukd, ATm(n)%ua(isc:iec,jsc:jec,npz), Time )
-+       if( id_vkd > 0 )  used= send_data( id_vkd, ATm(n)%va(isc:iec,jsc:jec,npz), Time )
++       if( id_tkd > 0 )  used= send_data( id_tkd, Atm(n)%pt(isc:iec,jsc:jec,npz), Time )
++       if( id_ukd > 0 )  used= send_data( id_ukd, Atm(n)%ua(isc:iec,jsc:jec,npz), Time )
++       if( id_vkd > 0 )  used= send_data( id_vkd, Atm(n)%va(isc:iec,jsc:jec,npz), Time )
++
++       if( id_t2km > 0 )  used= send_data( id_t2km, Atm(n)%pt(isc:iec,jsc:jec,lev_2km), Time )
++       if( id_u2km > 0 )  used= send_data( id_u2km, Atm(n)%ua(isc:iec,jsc:jec,lev_2km), Time )
++       if( id_v2km > 0 )  used= send_data( id_v2km, Atm(n)%va(isc:iec,jsc:jec,lev_2km), Time )
  
 +#ifdef MARS_GDIAGS
 +       if (do_bin_water_cycle) then
@@ -3043,18 +3511,18 @@ index bcf0643..51f7c54 100644
            nwater = Atm(1)%flagstruct%nwat
            a2 = 0.
            do k=1,npz
-@@ -2485,6 +2675,8 @@ contains
-           enddo
+@@ -2663,6 +2892,8 @@ contains
            used = send_data(id_tq, a2*ginv, Time)
         endif
+ 
 +#endif MARS_GCM
 +
- #ifdef HIWPP
         Cl  = get_tracer_index (MODEL_ATMOS, 'Cl')
         Cl2 = get_tracer_index (MODEL_ATMOS, 'Cl2')
-@@ -3843,21 +4035,28 @@ contains
-  end subroutine get_vorticity
+        if (Cl > 0 .and. Cl2 > 0) then
+@@ -4030,21 +4261,28 @@ contains
  
+  end subroutine get_vorticity
  
 - subroutine get_height_field(is, ie, js, je, ng, km, hydrostatic, delz, wz, pt, q, peln, zvir)
 + subroutine get_height_field(is, ie, js, je, ng, km, hydrostatic, delz, wz, pt, q, peln, zvir, moist_phys)
@@ -3084,7 +3552,7 @@ index bcf0643..51f7c54 100644
        do j=js,je
           do i=is,ie
              wz(i,j,km+1) = zsurf(i,j)
-@@ -3865,7 +4064,7 @@ contains
+@@ -4052,7 +4290,7 @@ contains
        if (hydrostatic ) then
           do k=km,1,-1
              do i=is,ie
@@ -3093,9 +3561,9 @@ index bcf0643..51f7c54 100644
                            *(peln(i,k+1,j)-peln(i,k,j))
              enddo
           enddo
-@@ -4105,6 +4304,19 @@ contains
-  real psmo, totw, psdry
-  integer k, n, kstrat
+@@ -4335,6 +4573,19 @@ contains
+  if (present(prt_level_in)) prt_level = prt_level_in
+  if (prt_level <= PRT_LEVEL_0) return
  
 +#if defined(MARS_GCM) || defined(VENUS_GCM)
 + psmo = g_sum(domain, ps(is:ie,js:je), is, ie, js, je, n_g, area, 1)
@@ -3113,7 +3581,7 @@ index bcf0643..51f7c54 100644
  !Needed when calling prt_mass in fv_restart?
      sphum   = get_tracer_index (MODEL_ATMOS, 'sphum')
      liq_wat = get_tracer_index (MODEL_ATMOS, 'liq_wat')
-@@ -4187,6 +4399,8 @@ contains
+@@ -4421,6 +4672,8 @@ contains
       endif
    endif
  
@@ -3122,40 +3590,43 @@ index bcf0643..51f7c54 100644
   end subroutine prt_mass
  
  
-@@ -5525,8 +5739,8 @@ end subroutine eqv_pot
- !   Ferrier-Aligo has an option for fixed slope (rather than fixed intercept).
- !   Thompson presumably is an extension of Reisner MP.
- 
--   use gfdl_cloud_microphys_mod, only : do_hail, rhor, rhos, rhog, rhoh, rnzr, rnzs, rnzg, rnzh
--   use gfdl_mp_mod, only: do_hail_inline => do_hail ! assuming same densities and numbers in both inline and traditional GFDL MP
-+!   use gfdl_cloud_microphys_mod, only : do_hail, rhor, rhos, rhog, rhoh, rnzr, rnzs, rnzg, rnzh
-+!   use gfdl_mp_mod, only: do_hail_inline => do_hail ! assuming same densities and numbers in both inline and traditional GFDL MP
-    implicit none
- 
-    type(fv_grid_bounds_type), intent(IN) :: bd
-@@ -5541,6 +5755,8 @@ end subroutine eqv_pot
-    real,    intent(IN) :: zvir
-    real,    intent(OUT) :: allmax
- 
-+#ifndef MARS_GCM
-+
-    !Parameters for constant intercepts (in0[rsg] = .false.)
-    !Using GFDL MP values
-    real(kind=R_GRID), parameter:: vconr = 2503.23638966667
-@@ -5668,7 +5884,7 @@ end subroutine eqv_pot
-          allmax = max(maxdbz(i,j), allmax)
-       enddo
-    enddo
--
-+#endif
-  end subroutine dbzcalc
- 
-  subroutine max_vorticity_hy1(is, ie, js, je, km, vort, maxvorthy1)
+diff --git a/tools/fv_diagnostics.h b/tools/fv_diagnostics.h
+index 1191858..54abd28 100644
+--- a/tools/fv_diagnostics.h
++++ b/tools/fv_diagnostics.h
+@@ -43,6 +43,7 @@
+  integer :: id_x850, id_srh25, &
+             id_uh03, id_uh25, id_theta_e,  &
+             id_s200, id_sl12, id_sl13, id_w5km, id_rain5km, id_w2500m
++ integer :: id_tkd, id_ukd, id_vkd, id_t5mb, id_u5mb, id_v5mb, id_t2km, id_u2km, id_v2km
+  integer :: id_srh1, id_srh3, id_ustm, id_vstm
+ ! plev and plev_ave diagnostics
+  integer, allocatable :: id_u_levs(:), id_v_levs(:), id_t_levs(:), id_h_levs(:), id_q_levs(:), id_omg_levs(:)
 diff --git a/tools/fv_eta.F90 b/tools/fv_eta.F90
-index 2aee5e0..c8a72f2 100644
+index a72b43d..d50bd3f 100644
 --- a/tools/fv_eta.F90
 +++ b/tools/fv_eta.F90
-@@ -259,6 +259,131 @@ module fv_eta_mod
+@@ -165,8 +165,8 @@ module fv_eta_mod
+ !            pint = 250.E2
+              pint = 300.E2    ! revised for Moist test
+              stretch_fac = 1.03
+-#endif
+-#endif
++#endif GFSL60
++#endif SUPER_K
+         case (64)
+ !!!          ptop = 3.e2
+              ptop = 2.0e2
+@@ -185,7 +185,7 @@ module fv_eta_mod
+         case (90)          ! super-duper cell
+              ptop = 40.e2
+              stretch_fac = 1.025
+-#endif
++#endif HIWPP
+ ! Low-top:
+         case (31)               ! N = 4, M=2
+              ptop = 100.
+@@ -267,6 +267,203 @@ module fv_eta_mod
   end subroutine set_eta
  
  
@@ -3211,6 +3682,27 @@ index 2aee5e0..c8a72f2 100644
 +            bk(k) = b56(k)
 +          enddo
 +
++       case (65)
++          ks = 19
++          do k=1,km+1
++            ak(k) = a65(k)
++            bk(k) = b65(k)
++          enddo
++
++       case (71)
++          ks = 25
++          do k=1,km+1
++            ak(k) = a71(k)
++            bk(k) = b71(k)
++          enddo
++
++       case (87)
++          ks = 41 
++          do k=1,km+1
++            ak(k) = a87(k)
++            bk(k) = b87(k)
++          enddo
++
 +!------
 +        case (24)
 +            ks = 0
@@ -3218,6 +3710,13 @@ index 2aee5e0..c8a72f2 100644
 +              ak(k) = a24(k)
 +              bk(k) = b24(k)
 +            enddo
++
++       case (28)
++          ks = 4
++          do k=1,km+1
++            ak(k) = a28(k)
++            bk(k) = b28(k)
++          enddo
 +
 +       case (30)
 +          ks = 4
@@ -3231,6 +3730,50 @@ index 2aee5e0..c8a72f2 100644
 +          do k=1,km+1
 +            ak(k) = a37(k)
 +            bk(k) = b37(k)
++          enddo
++
++       case (36)
++          ks = 10
++          do k=1,km+1
++            ak(k) = a36(k)
++            bk(k) = b36(k)
++          enddo
++
++       case (38)
++          ks = 12
++          do k=1,km+1
++            ak(k) = a38(k)
++            bk(k) = b38(k)
++          enddo
++
++
++       case (40)
++          ks = 14
++          do k=1,km+1
++            ak(k) = a40(k)
++            bk(k) = b40(k)
++          enddo
++
++
++       case (42)
++          ks = 16
++          do k=1,km+1
++            ak(k) = a42(k)
++            bk(k) = b42(k)
++          enddo
++
++       case (46)
++          ks = 7
++          do k=1,km+1
++            ak(k) = a46(k)
++            bk(k) = b46(k)
++          enddo
++
++        case (76)
++          ks = 21
++          do k=1,km+1
++            ak(k) = a76(k)
++            bk(k) = b76(k)
 +          enddo
 +#endif MARS_GCM
 +
@@ -3285,19 +3828,38 @@ index 2aee5e0..c8a72f2 100644
 + end subroutine set_eta
 +
  #else
-  !This is the version of set_eta used in fvGFS and AM4
-  subroutine set_eta(km, ks, ptop, ak, bk, npz_type)
+  !This is the version of set_eta used in SHiELD and AM4
+  subroutine set_eta(km, ks, ptop, ak, bk, npz_type,fv_eta_file)
+@@ -809,7 +1006,7 @@ module fv_eta_mod
+ 
+ 
+  end subroutine set_eta
+-#endif
++#endif USE_VAR_ETA
+ 
+ 
+  subroutine set_external_eta(ak, bk, ptop, ks)
 diff --git a/tools/fv_eta_mars.h b/tools/fv_eta_mars.h
 new file mode 100644
-index 0000000..d3c33ae
+index 0000000..2643d8f
 --- /dev/null
 +++ b/tools/fv_eta_mars.h
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,491 @@
 +#ifdef MARS_GCM
 +real a24(25),b24(25)            ! For Legacy grid
++real a28(29),b28(29)           
++real a36(37),b36(37)            ! For Mars GCM
 +real a37(38),b37(38)
-+real a30(31),b30(31)
++real a38(39),b38(39)            
++real a30(31),b30(31)         
++real a40(41),b40(41)            
++real a42(43),b42(43)           
++real a46(47),b46(47)          
 +real a56(57),b56(57)
++real a65(66),b65(66)
++real a71(72),b71(72)
++real a76(77),b76(77)
++real a87(88),b87(88)
 +
 +
 +! Standard Grids for Mars [14July2022 ASB]
@@ -3314,7 +3876,7 @@ index 0000000..d3c33ae
 +            1.3365108017e+00, 1.2050971851e+00, 1.0765177308e+00, 9.5199715141e-01,  &
 +            8.3266844952e-01, 7.1955149431e-01, 6.1353511520e-01, 5.1536294605e-01,  &
 +            4.2562308332e-01, 3.4474146159e-01, 2.7297870058e-01, 2.1043003539e-01,  &
-+            1.5702779957e-01, 1.1254577410e-01, 7.6604512139e-02, 4.8676435740e-02,  &
++            1.5702779957e-01, 1.1254577410e-01, 7.6604512139e-02, 4.8676435740e-02,  & 
 +            2.8088923499e-02, 1.4022366709e-02, 5.4970022270e-03, 1.3319303207e-03,  &
 +            0.0000000000e+00/
 +
@@ -3336,6 +3898,139 @@ index 0000000..d3c33ae
 +            1.0000000000e+00 /
 +
 +
++          data a65  /      &
++            9.5974611340e-06, &
++            2.5174611340e-05, 6.0872254570e-05, 1.2043158398e-04, 2.5611729739e-04,  &
++            5.6679732959e-04, 1.2541666182e-03, 2.6343189410e-03, 5.2863018554e-03,  &
++            1.0188349382e-02, 1.8941321588e-02, 3.4090757273e-02, 5.9579139559e-02,  &
++            1.0136559389e-01, 1.6825499749e-01, 2.7298155063e-01, 4.3359212333e-01,  &
++            6.7517083742e-01, 1.0319369477e+00, 1.5492970168e+00, 2.0465542407e+00,  &
++            2.3680806130e+00, 2.5775313262e+00, 2.7138755632e+00, 2.8011848141e+00,  &
++            2.8544249882e+00, 2.8829273625e+00, 2.8924983792e+00, 2.8867229631e+00,  &
++            2.8677845297e+00, 2.8369915471e+00, 2.7951230781e+00, 2.7426603667e+00,  &
++            2.6799447585e+00, 2.6072863534e+00, 2.5250383250e+00, 2.4336462211e+00,  &
++            2.3336782332e+00, 2.2258404832e+00, 2.1109802625e+00, 1.9900795271e+00,  &
++            1.8642406009e+00, 1.7346658339e+00, 1.6026328225e+00, 1.4694666891e+00,  &
++            1.3365108017e+00, 1.2050971851e+00, 1.0765177308e+00, 9.5199715141e-01,  &
++            8.3266844952e-01, 7.1955149431e-01, 6.1353511520e-01, 5.1536294605e-01,  &
++            4.2562308332e-01, 3.4474146159e-01, 2.7297870058e-01, 2.1043003539e-01,  &
++            1.5702779957e-01, 1.1254577410e-01, 7.6604512139e-02, 4.8676435740e-02,  & 
++            2.8088923499e-02, 1.4022366709e-02, 5.4970022270e-03, 1.3319303207e-03,  &
++            0.0000000000e+00/
++
++          data b65 /      &
++            0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 3.8959243224e-04,  &
++            1.5398265280e-03, 3.4859776279e-03, 6.3276882586e-03, 1.0211655864e-02,  &
++            1.5319232300e-02, 2.1856126398e-02, 3.0042710653e-02, 4.0104236295e-02,  &
++            5.2260765318e-02, 6.6716944495e-02, 8.3651935482e-02, 1.0320991147e-01,  &
++            1.2549155673e-01, 1.5054697772e-01, 1.7837036759e-01, 2.0889667263e-01,  &
++            2.4200040206e-01, 2.7749661130e-01, 3.1514398255e-01, 3.5464983214e-01,  &
++            3.9567679601e-01, 4.3785088608e-01, 4.8077057178e-01, 5.2401652319e-01,  &
++            5.6716165202e-01, 6.0978110361e-01, 6.5146188308e-01, 6.9181183906e-01,  &
++            7.3046777636e-01, 7.6710252154e-01, 8.0143081946e-01, 8.3321399362e-01,  &
++            8.6226335573e-01, 8.8844240001e-01, 9.1166786514e-01, 9.3190979178e-01,  &
++            9.4919074908e-01, 9.6358445368e-01, 9.7521407014e-01, 9.8425058294e-01,  &
++            9.9091181684e-01, 9.9546308366e-01, 9.9822145915e-01, 9.9956905812e-01,  &
++            1.0000000000e+00/
++
++          data a71   /  &
++            8.2014878501e-07, 1.7514878501e-06, 3.5382365738e-06,  &
++            6.1974497593e-06, 9.7420869331e-06, 1.5574611340e-05, 2.5322621647e-05,  &
++            4.1872254570e-05, 7.0415822497e-05, 1.2043158398e-04, 2.5611729739e-04,  &
++            5.6679732959e-04, 1.2541666182e-03, 2.6343189410e-03, 5.2863018554e-03,  &
++            1.0188349382e-02, 1.8941321588e-02, 3.4090757273e-02, 5.9579139559e-02,  &
++            1.0136559389e-01, 1.6825499749e-01, 2.7298155063e-01, 4.3359212333e-01,  &
++            6.7517083742e-01, 1.0319369477e+00, 1.5492970168e+00, 2.0465542407e+00,  &
++            2.3680806130e+00, 2.5775313262e+00, 2.7138755632e+00, 2.8011848141e+00,  &
++            2.8544249882e+00, 2.8829273625e+00, 2.8924983792e+00, 2.8867229631e+00,  &
++            2.8677845297e+00, 2.8369915471e+00, 2.7951230781e+00, 2.7426603667e+00,  &
++            2.6799447585e+00, 2.6072863534e+00, 2.5250383250e+00, 2.4336462211e+00,  &
++            2.3336782332e+00, 2.2258404832e+00, 2.1109802625e+00, 1.9900795271e+00,  &
++            1.8642406009e+00, 1.7346658339e+00, 1.6026328225e+00, 1.4694666891e+00,  &
++            1.3365108017e+00, 1.2050971851e+00, 1.0765177308e+00, 9.5199715141e-01,  &
++            8.3266844952e-01, 7.1955149431e-01, 6.1353511520e-01, 5.1536294605e-01,  &
++            4.2562308332e-01, 3.4474146159e-01, 2.7297870058e-01, 2.1043003539e-01,  &
++            1.5702779957e-01, 1.1254577410e-01, 7.6604512139e-02, 4.8676435740e-02,  &
++            2.8088923499e-02, 1.4022366709e-02, 5.4970022270e-03, 1.3319303207e-03,  &
++            0.0000000000e+00 /
++
++          data b71  / &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++            0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 3.8959243224e-04,  &
++            1.5398265280e-03, 3.4859776279e-03, 6.3276882586e-03, 1.0211655864e-02,  &
++            1.5319232300e-02, 2.1856126398e-02, 3.0042710653e-02, 4.0104236295e-02,  &
++            5.2260765318e-02, 6.6716944495e-02, 8.3651935482e-02, 1.0320991147e-01,  &
++            1.2549155673e-01, 1.5054697772e-01, 1.7837036759e-01, 2.0889667263e-01,  &
++            2.4200040206e-01, 2.7749661130e-01, 3.1514398255e-01, 3.5464983214e-01,  &
++            3.9567679601e-01, 4.3785088608e-01, 4.8077057178e-01, 5.2401652319e-01,  &
++            5.6716165202e-01, 6.0978110361e-01, 6.5146188308e-01, 6.9181183906e-01,  &
++            7.3046777636e-01, 7.6710252154e-01, 8.0143081946e-01, 8.3321399362e-01,  &
++            8.6226335573e-01, 8.8844240001e-01, 9.1166786514e-01, 9.3190979178e-01,  &
++            9.4919074908e-01, 9.6358445368e-01, 9.7521407014e-01, 9.8425058294e-01,  &
++            9.9091181684e-01, 9.9546308366e-01, 9.9822145915e-01, 9.9956905812e-01,  &
++            1.0000000000e+00 /
++
++          data a87 /      &
++            2.2831429335e-08, 2.8304547417e-08, 3.5784055843e-08, &
++            4.4213682344e-08, 5.3061066281e-08, 6.4762184654e-08, 8.0388373078e-08,  &
++            1.0148251448e-07, 1.3029130398e-07, 1.7012411268e-07, 2.2591368869e-07,  &
++            3.0510227897e-07, 4.1905843595e-07, 5.8536931777e-07, 8.3159439527e-07,  &
++            1.2014878501e-06, 1.7654419600e-06, 2.6382365738e-06, 4.0095927136e-06,  &
++            6.1974497593e-06, 9.7420869331e-06, 1.5574611340e-05, 2.5322621647e-05,  &
++            4.1872254570e-05, 7.0415822497e-05, 1.2043158398e-04, 2.5611729739e-04,  &
++            5.6679732959e-04, 1.2541666182e-03, 2.6343189410e-03, 5.2863018554e-03,  &
++            1.0188349382e-02, 1.8941321588e-02, 3.4090757273e-02, 5.9579139559e-02,  &
++            1.0136559389e-01, 1.6825499749e-01, 2.7298155063e-01, 4.3359212333e-01,  &
++            6.7517083742e-01, 1.0319369477e+00, 1.5492970168e+00, 2.0465542407e+00,  &
++            2.3680806130e+00, 2.5775313262e+00, 2.7138755632e+00, 2.8011848141e+00,  &
++            2.8544249882e+00, 2.8829273625e+00, 2.8924983792e+00, 2.8867229631e+00,  &
++            2.8677845297e+00, 2.8369915471e+00, 2.7951230781e+00, 2.7426603667e+00,  &
++            2.6799447585e+00, 2.6072863534e+00, 2.5250383250e+00, 2.4336462211e+00,  &
++            2.3336782332e+00, 2.2258404832e+00, 2.1109802625e+00, 1.9900795271e+00,  &
++            1.8642406009e+00, 1.7346658339e+00, 1.6026328225e+00, 1.4694666891e+00,  &
++            1.3365108017e+00, 1.2050971851e+00, 1.0765177308e+00, 9.5199715141e-01,  &
++            8.3266844952e-01, 7.1955149431e-01, 6.1353511520e-01, 5.1536294605e-01,  &
++            4.2562308332e-01, 3.4474146159e-01, 2.7297870058e-01, 2.1043003539e-01,  &
++            1.5702779957e-01, 1.1254577410e-01, 7.6604512139e-02, 4.8676435740e-02,  &
++            2.8088923499e-02, 1.4022366709e-02, 5.4970022270e-03, 1.3319303207e-03,  &
++            0.0000000000e+00/
++
++          data b87 /      &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++             0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 3.8959243224e-04,  &
++             1.5398265280e-03, 3.4859776279e-03, 6.3276882586e-03, 1.0211655864e-02,  &
++             1.5319232300e-02, 2.1856126398e-02, 3.0042710653e-02, 4.0104236295e-02,  &
++             5.2260765318e-02, 6.6716944495e-02, 8.3651935482e-02, 1.0320991147e-01,  &
++             1.2549155673e-01, 1.5054697772e-01, 1.7837036759e-01, 2.0889667263e-01,  &
++             2.4200040206e-01, 2.7749661130e-01, 3.1514398255e-01, 3.5464983214e-01,  &
++             3.9567679601e-01, 4.3785088608e-01, 4.8077057178e-01, 5.2401652319e-01,  &
++             5.6716165202e-01, 6.0978110361e-01, 6.5146188308e-01, 6.9181183906e-01,  &
++             7.3046777636e-01, 7.6710252154e-01, 8.0143081946e-01, 8.3321399362e-01,  &
++             8.6226335573e-01, 8.8844240001e-01, 9.1166786514e-01, 9.3190979178e-01,  &
++             9.4919074908e-01, 9.6358445368e-01, 9.7521407014e-01, 9.8425058294e-01,  &
++             9.9091181684e-01, 9.9546308366e-01, 9.9822145915e-01, 9.9956905812e-01,  &
++             1.0000000000e+00 /
++
++
 +!------- Mars vertical levels -----------------------------
 +      data a24 /  8.e-5,   0.,  0.,  0., 0.,   &
 +                0., 0., 0., 0., 0.,   &
@@ -3348,6 +4043,26 @@ index 0000000..d3c33ae
 +                 0.0393587, 0.0649849, 0.1072458, 0.1768876, 0.2917842,       &
 +                 0.4448475, 0.6020744, 0.7372935, 0.8585347, 0.9304322,       &
 +                 0.974, 0.988, 0.996, 0.999, 1.0000000        /
++
++  data a28 /     &
++       2.0000000e-02,5.7381273e-02,1.9583981e-01,5.9229580e-01, &
++       1.5660228e+00,2.4454965e+00,2.7683755e+00,2.8851692e+00, &
++       2.9172228e+00,2.9087039e+00,2.8598939e+00,2.7687652e+00, &
++       2.6327054e+00,2.4509219e+00,2.2266811e+00,1.9684681e+00, &
++       1.6894832e+00,1.4055812e+00,1.1324258e+00,8.8289177e-01, &
++       6.6548467e-01,4.8401020e-01,3.3824119e-01,2.2510704e-01, &
++       1.3995719e-01,7.7611554e-02,3.3085503e-02,2.0000000e-03, &
++       0.0000000e+00  /
++
++  data b28 /      &
++       0.0000000e+00,0.0000000e+00,0.0000000e+00,0.0000000e+00, &
++       0.0000000e+00,1.9366394e-03,7.4419133e-03,1.6227267e-02, &
++       2.7075192e-02,4.3641000e-02,6.8106804e-02,1.0280240e-01, &
++       1.4971954e-01,2.0987133e-01,2.8270233e-01,3.6581610e-01, &
++       4.5520230e-01,5.4593599e-01,6.3310970e-01,7.1267629e-01, &
++       7.8196151e-01,8.3977530e-01,8.8620345e-01,9.2223168e-01, &
++       9.4934533e-01,9.6919618e-01,9.8337259e-01,9.9326941e-01, &
++       1.0000000e+00  /
 +
 +  data a30 /     &
 +       2.0000000e-02,5.7381273e-02,1.9583981e-01,5.9229580e-01, &
@@ -3368,6 +4083,37 @@ index 0000000..d3c33ae
 +       7.8196151e-01,8.3977530e-01,8.8620345e-01,9.2223168e-01, &
 +       9.4934533e-01,9.6919618e-01,9.8337259e-01,9.9326941e-01, &
 +       9.9600000e-01,9.9900000e-01,1.0000000e+00  /
++
++
++  data a36 /      &
++  2.0000000000e-03,  6.3299931399e-03,  1.2501646444e-02, &
++  2.4215113043e-02,  4.6000346612e-02,  8.5702012910e-02, &
++  1.5659441036e-01,  2.8061882660e-01,  4.9318818941e-01, &
++  8.5008792314e-01,  1.4370449074e+00,  2.0054945771e+00, &
++  2.3335916338e+00,  2.5221957520e+00,  2.6264602874e+00, &
++  2.6762480591e+00,  2.6870173757e+00,  2.6657174771e+00, &
++  2.6140573091e+00,  2.5304052915e+00,  2.4110051828e+00, &
++  2.2508885698e+00,  2.0446940567e+00,  1.8074358726e+00, &
++  1.5511877409e+00,  1.2904762231e+00,  1.0396626704e+00, &
++  8.1055438393e-01,  6.1095195817e-01,  4.4434410651e-01, &
++  3.1051916267e-01,  2.0665632614e-01,  1.2848513437e-01, &
++  7.1249514632e-02,  3.0373097709e-02,  2.1040298410e-16, &
++  0.0000000000e+00  /
++
++  data b36 /      &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  6.2833541661e-04, &
++  2.5671934940e-03,  6.0923860938e-03,  1.1725248117e-02, &
++  2.0238695380e-02,  3.2676843179e-02,  5.0373898012e-02, &
++  7.4959525687e-02,  1.0833815470e-01,  1.5263019875e-01, &
++  2.1006506655e-01,  2.8281982789e-01,  3.6584598427e-01, &
++  4.5513763376e-01,  5.4577516959e-01,  6.3285639147e-01, &
++  7.1233851133e-01,  7.8155013540e-01,  8.3930250332e-01, &
++  8.8568132228e-01,  9.2167127115e-01,  9.4875609753e-01, &
++  9.6858585131e-01,  9.8274719475e-01,  9.9326941371e-01, &
++  1.0000000000e+00  /
 +
 +
 +   data a37 /      &
@@ -3401,16 +4147,205 @@ index 0000000..d3c33ae
 +  9.6858585131e-01,  9.8274719475e-01,  9.9326941371e-01, &
 +  9.9600000e-01,     9.9900000e-01,                       &
 +  1.0000000000e+00  /
++
++    data a38 /      &
++    7.5e-4,            1.50e-3,          &
++    3.5000000000e-03,  6.3299931399e-03,  1.2501646444e-02, &
++    2.4215113043e-02,  4.6000346612e-02,  8.5702012910e-02, &
++    1.5659441036e-01,  2.8061882660e-01,  4.9318818941e-01, &
++    8.5008792314e-01,  1.4370449074e+00,  2.0054945771e+00, &
++    2.3335916338e+00,  2.5221957520e+00,  2.6264602874e+00, &
++    2.6762480591e+00,  2.6870173757e+00,  2.6657174771e+00, &
++    2.6140573091e+00,  2.5304052915e+00,  2.4110051828e+00, &
++    2.2508885698e+00,  2.0446940567e+00,  1.8074358726e+00, &
++    1.5511877409e+00,  1.2904762231e+00,  1.0396626704e+00, &
++    8.1055438393e-01,  6.1095195817e-01,  4.4434410651e-01, &
++    3.1051916267e-01,  2.0665632614e-01,  1.2848513437e-01, &
++    7.1249514632e-02,  3.0373097709e-02,  2.1040298410e-16, &
++    0.0000000000e+00  /
++
++    data b38 /      &
++    0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  6.2833541661e-04, &
++    2.5671934940e-03,  6.0923860938e-03,  1.1725248117e-02, &
++    2.0238695380e-02,  3.2676843179e-02,  5.0373898012e-02, &
++    7.4959525687e-02,  1.0833815470e-01,  1.5263019875e-01, &
++    2.1006506655e-01,  2.8281982789e-01,  3.6584598427e-01, &
++    4.5513763376e-01,  5.4577516959e-01,  6.3285639147e-01, &
++    7.1233851133e-01,  7.8155013540e-01,  8.3930250332e-01, &
++    8.8568132228e-01,  9.2167127115e-01,  9.4875609753e-01, &
++    9.6858585131e-01,  9.8274719475e-01,  9.9326941371e-01, &
++    1.0000000000e+00  /
++
++
++    data a40 /      &
++    1.5e-4,           &
++    3.00e-4,           7.5e-4,            1.50e-3,          &
++    3.5000000000e-03,  6.3299931399e-03,  1.2501646444e-02, &
++    2.4215113043e-02,  4.6000346612e-02,  8.5702012910e-02, &
++    1.5659441036e-01,  2.8061882660e-01,  4.9318818941e-01, &
++    8.5008792314e-01,  1.4370449074e+00,  2.0054945771e+00, &
++    2.3335916338e+00,  2.5221957520e+00,  2.6264602874e+00, &
++    2.6762480591e+00,  2.6870173757e+00,  2.6657174771e+00, &
++    2.6140573091e+00,  2.5304052915e+00,  2.4110051828e+00, &
++    2.2508885698e+00,  2.0446940567e+00,  1.8074358726e+00, &
++    1.5511877409e+00,  1.2904762231e+00,  1.0396626704e+00, &
++    8.1055438393e-01,  6.1095195817e-01,  4.4434410651e-01, &
++    3.1051916267e-01,  2.0665632614e-01,  1.2848513437e-01, &
++    7.1249514632e-02,  3.0373097709e-02,  2.1040298410e-16, &
++    0.0000000000e+00  /
++
++    data b40 /      &
++    0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++    0.0000000000e+00,  0.0000000000e+00,  6.2833541661e-04, &
++    2.5671934940e-03,  6.0923860938e-03,  1.1725248117e-02, &
++    2.0238695380e-02,  3.2676843179e-02,  5.0373898012e-02, &
++    7.4959525687e-02,  1.0833815470e-01,  1.5263019875e-01, &
++    2.1006506655e-01,  2.8281982789e-01,  3.6584598427e-01, &
++    4.5513763376e-01,  5.4577516959e-01,  6.3285639147e-01, &
++    7.1233851133e-01,  7.8155013540e-01,  8.3930250332e-01, &
++    8.8568132228e-01,  9.2167127115e-01,  9.4875609753e-01, &
++    9.6858585131e-01,  9.8274719475e-01,  9.9326941371e-01, &
++    1.0000000000e+00  /
++
++
++  data a42 /      &
++  2.00e-5,           6.e-5,             1.50e-4,           &
++  3.00e-4,           7.5e-4,            1.50e-3,          &
++  3.5000000000e-03,  6.3299931399e-03,  1.2501646444e-02, &
++  2.4215113043e-02,  4.6000346612e-02,  8.5702012910e-02, &
++  1.5659441036e-01,  2.8061882660e-01,  4.9318818941e-01, &
++  8.5008792314e-01,  1.4370449074e+00,  2.0054945771e+00, &
++  2.3335916338e+00,  2.5221957520e+00,  2.6264602874e+00, &
++  2.6762480591e+00,  2.6870173757e+00,  2.6657174771e+00, &
++  2.6140573091e+00,  2.5304052915e+00,  2.4110051828e+00, &
++  2.2508885698e+00,  2.0446940567e+00,  1.8074358726e+00, &
++  1.5511877409e+00,  1.2904762231e+00,  1.0396626704e+00, &
++  8.1055438393e-01,  6.1095195817e-01,  4.4434410651e-01, &
++  3.1051916267e-01,  2.0665632614e-01,  1.2848513437e-01, &
++  7.1249514632e-02,  3.0373097709e-02,  2.1040298410e-16, &
++  0.0000000000e+00  /
++
++  data b42 /      &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  0.0000000000e+00, &
++  0.0000000000e+00,  0.0000000000e+00,  6.2833541661e-04, &
++  2.5671934940e-03,  6.0923860938e-03,  1.1725248117e-02, &
++  2.0238695380e-02,  3.2676843179e-02,  5.0373898012e-02, &
++  7.4959525687e-02,  1.0833815470e-01,  1.5263019875e-01, &
++  2.1006506655e-01,  2.8281982789e-01,  3.6584598427e-01, &
++  4.5513763376e-01,  5.4577516959e-01,  6.3285639147e-01, &
++  7.1233851133e-01,  7.8155013540e-01,  8.3930250332e-01, &
++  8.8568132228e-01,  9.2167127115e-01,  9.4875609753e-01, &
++  9.6858585131e-01,  9.8274719475e-01,  9.9326941371e-01, &
++  1.0000000000e+00  /
++
++  data a46 /      &
++  2.0000000000e-02, 8.8226564292e-02, 1.8334634034e-01, 3.6277029587e-01, &
++  6.8399136107e-01, 1.2304729574e+00, 2.1153951709e+00, 3.4820467261e+00, &
++  4.7509071547e+00, 5.4799134056e+00, 5.9007382453e+00, 6.1362740550e+00, &
++  6.2537922912e+00, 6.2913572009e+00, 6.2713602880e+00, 6.2076404259e+00, &
++  6.1093030517e+00, 5.9827893289e+00, 5.8329954377e+00, 5.6638694533e+00, &
++  5.4787213167e+00, 5.2803784904e+00, 5.0712624943e+00, 4.8534284591e+00, &
++  4.6285904465e+00, 4.3981439438e+00, 4.1631904900e+00, 3.9245659713e+00, &
++  3.6828725958e+00, 3.4385142141e+00, 3.1917350931e+00, 2.9426632973e+00, &
++  2.6913614665e+00, 2.4378901625e+00, 2.1823923203e+00, 1.9252119309e+00, &
++  1.6670657806e+00, 1.4092925303e+00, 1.1542040649e+00, 9.0554851909e-01, &
++  6.6904038704e-01, 4.5279074036e-01, 2.6727564587e-01, 1.2432437078e-01, &
++  3.4798358332e-02, 5.4562474330e-16, 0.0000000000e+00 /
++
++  data b46 /      &
++  0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, &
++  0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00, &
++  1.2273971271e-03, 4.7116904788e-03, 1.0383505003e-02, 1.8331837344e-02, &
++  2.8691688586e-02, 4.1579931981e-02, 5.7059712148e-02, 7.5124205614e-02, &
++  9.5694383465e-02, 1.1862663695e-01, 1.4372658884e-01, 1.7076585043e-01, &
++  1.9949909211e-01, 2.2967952981e-01, 2.6107167554e-01, 2.9346085040e-01, &
++  3.2665945404e-01, 3.6051030738e-01, 3.9488755084e-01, 4.2969561994e-01, &
++  4.6486676688e-01, 5.0035747810e-01, 5.3614396907e-01, 5.7221672149e-01, &
++  6.0857374865e-01, 6.4521190566e-01, 6.8211505810e-01, 7.1923725109e-01, &
++  7.5647819344e-01, 7.9364758261e-01, 8.3041470044e-01, 8.6624194162e-01, &
++  9.0030869896e-01, 9.3144962000e-01, 9.5815926078e-01, 9.7873764014e-01, &
++  9.9162395396e-01, 9.9663254714e-01, 1.0000000000e+00 /
++
++
++  data a76 /     &
++    6.0285832135e-04, 9.4857042251e-04, 1.4792505308e-03,  &
++    2.2864288606e-03, 3.5030279458e-03, 5.3201733530e-03,  &
++    8.0099673512e-03, 1.1955980105e-02, 1.7693590973e-02,  &
++    2.5962722214e-02, 3.7775932646e-02, 5.4505254977e-02,  &
++    7.7991534007e-02, 1.1068030955e-01, 1.5578843383e-01,  &
++    2.1750555505e-01, 3.0123426628e-01, 4.1387203875e-01,  &
++    5.6413695847e-01, 7.6293770229e-01, 1.0237860761e+00,  &
++    1.3632477741e+00, 1.6944404794e+00, 1.9382423881e+00,  &
++    2.1185315202e+00, 2.2522397601e+00, 2.3514313675e+00,  &
++    2.4247353103e+00, 2.4783386356e+00, 2.5166799054e+00,  &
++    2.5429365572e+00, 2.5593699491e+00, 2.5675716627e+00,  &
++    2.5686410153e+00, 2.5633144825e+00, 2.5520614037e+00,  &
++    2.5351559858e+00, 2.5127325943e+00, 2.4848292049e+00,  &
++    2.4514223915e+00, 2.4124561656e+00, 2.3678662178e+00,  &
++    2.3176005673e+00, 2.2616372294e+00, 2.1999992372e+00,  &
++    2.1327671604e+00, 2.0600891423e+00, 1.9821884068e+00,  &
++    1.8993681597e+00, 1.8120138187e+00, 1.7205925357e+00,  &
++    1.6256500342e+00, 1.5278048482e+00, 1.4277401219e+00,  &
++    1.3261932078e+00, 1.2239433674e+00, 1.1217979419e+00,  &
++    1.0205774084e+00, 9.2109976896e-01, 8.2416473305e-01,  &
++    7.3053815008e-01, 6.4093712320e-01, 5.5601619317e-01,  &
++    4.7635492188e-01, 4.0244713015e-01, 3.3469195756e-01,  &
++    2.7338681215e-01, 2.1872216553e-01, 1.7077802000e-01,  &
++    1.2952171587e-01, 9.4806534630e-02, 6.6370223983e-02,  &
++    4.3831977344e-02, 2.6685140016e-02, 1.4279685785e-02,  &
++    5.7777081733e-03, 0.0000000000e+00  /
++
++  data b76 /     &
++    0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++    0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++    0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++    0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++    0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++    0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++    0.0000000000e+00, 0.0000000000e+00, 0.0000000000e+00,  &
++    0.0000000000e+00, 1.4756322221e-04, 5.8511592220e-04,  &
++    1.3192794498e-03, 2.3731952595e-03, 3.7842793574e-03,  &
++    5.6027756572e-03, 7.8907794543e-03, 1.0721492921e-02,  &
++    1.4178535250e-02, 1.8355172276e-02, 2.3353361533e-02,  &
++    2.9282533799e-02, 3.6258054217e-02, 4.4399327254e-02,  &
++    5.3827530917e-02, 6.4662987415e-02, 7.7022199556e-02,  &
++    9.1014604299e-02, 1.0673911613e-01, 1.2428055245e-01,  &
++    1.4370604982e-01, 1.6506159270e-01, 1.8836878442e-01,  &
++    2.1362199234e-01, 2.4078599565e-01, 2.6979425414e-01,  &
++    3.0054790025e-01, 3.3291553506e-01, 3.6673388211e-01,  &
++    4.0180932339e-01, 4.3792030922e-01, 4.7482060109e-01,  &
++    5.1224327513e-01, 5.4990538414e-01, 5.8751315199e-01,  &
++    6.2476755388e-01, 6.6137012349e-01, 6.9702882118e-01,  &
++    7.3146379903e-01, 7.6441290665e-01, 7.9563679668e-01,  &
++    8.2492351074e-01, 8.5209245326e-01, 8.7699769273e-01,  &
++    8.9953056619e-01, 9.1962160378e-01, 9.3724183779e-01,  &
++    9.5240361829e-01, 9.6516113573e-01, 9.7561097187e-01,  &
++    9.8389321834e-01, 9.9019416528e-01, 9.9475274880e-01,  &
++    9.9787691428e-01, 1.0000000000e+00  /
++                                                                                    
 +#endif
+\ No newline at end of file
 diff --git a/tools/fv_eta_venus.h b/tools/fv_eta_venus.h
 new file mode 100644
-index 0000000..7f7f7b9
+index 0000000..2e29c62
 --- /dev/null
 +++ b/tools/fv_eta_venus.h
 @@ -0,0 +1,35 @@
 +#ifdef VENUS_GCM
 +      real a50(51), b50(51)
-+
++      
 +       data a50 / &
 +          0.00000010869565, 0.00000066411131, 0.00000155378600, 0.00000307196430,  &
 +          0.00000559748410, 0.00000865786490, 0.00001208302700, 0.00001686322300,  &
@@ -3440,62 +4375,16 @@ index 0000000..7f7f7b9
 +          0.58609291099510, 0.67851634714958, 0.76198545182255, 0.83348584823964,  &
 +          0.89131068624888, 0.93508544124457, 0.96563140848759, 0.98471159261535,  &
 +          0.99478675027412, 0.99868812493551, 1.00000000000000 /
-+
-+
++                  
++                  
 +#endif
 \ No newline at end of file
-diff --git a/tools/fv_io.F90 b/tools/fv_io.F90
-index 525abac..be268c4 100644
---- a/tools/fv_io.F90
-+++ b/tools/fv_io.F90
-@@ -45,7 +45,7 @@ module fv_io_mod
-   use mpp_domains_mod,         only: domain2d, EAST, WEST, NORTH, CENTER, SOUTH, CORNER, &
-                                      mpp_get_compute_domain, mpp_get_data_domain, &
-                                      mpp_get_layout, mpp_get_ntile_count, &
--                                     mpp_get_global_domain
-+                                     mpp_get_global_domain, mpp_update_domains
-   use tracer_manager_mod,      only: tr_get_tracer_names=>get_tracer_names, &
-                                      get_tracer_names, get_number_tracers, &
-                                      set_tracer_profile, &
-@@ -58,6 +58,8 @@ module fv_io_mod
-   use fv_mp_mod,               only: mp_gather, is_master
-   use fv_treat_da_inc_mod,     only: read_da_inc
- 
-+  use fv_surf_map_mod,   only: surfdrv
-+
-   implicit none
-   private
- 
-@@ -656,7 +658,7 @@ contains
-           if( is_master() ) write(*,*) 'Back from read_da_inc',pt_r(i,j,k)
-        endif
- !      ====== end PJP added DA functionailty======
--
-+       n = 1   ! mistakenly removed by GFDL? Urata 04/2022
-        call rst_remap(npz_rst, npz, isc, iec, jsc, jec, isd, ied, jsd, jed, ntracers, ntprog,      &
-                       delp_r,      u_r,      v_r,      w_r,      delz_r,      pt_r,  q_r,  qdiag_r,&
-                       Atm(n)%delp, Atm(n)%u, Atm(n)%v, Atm(n)%w, Atm(n)%delz, Atm(n)%pt, Atm(n)%q, &
-@@ -674,6 +676,14 @@ contains
-     deallocate( q_r )
-     deallocate( qdiag_r )
- 
-+       call surfdrv(Atm(1)%npx, Atm(1)%npy, Atm(1)%gridstruct%grid_64, Atm(1)%gridstruct%agrid_64,   &
-+                    Atm(1)%gridstruct%area_64, Atm(1)%gridstruct%dx, Atm(1)%gridstruct%dy, Atm(1)%gridstruct%dxa, Atm(1)%gridstruct%dya, Atm(1)%gridstruct%dxc, Atm(1)%gridstruct%dyc, &
-+                    Atm(1)%gridstruct%sin_sg, Atm(1)%phis, &
-+                    Atm(1)%flagstruct%stretch_fac, Atm(1)%gridstruct%nested, Atm(1)%gridstruct%bounded_domain, &
-+                    Atm(1)%neststruct%npx_global, Atm(1)%domain, Atm(1)%flagstruct%grid_number, Atm(1)%bd)
-+       call mpp_update_domains( Atm(1)%phis, Atm(1)%domain )
-+
-+
-     if ( (.not.Atm(1)%flagstruct%hydrostatic) .and. (.not.Atm(1)%flagstruct%make_nh) ) then
-          deallocate ( w_r )
-          deallocate ( delz_r )
 diff --git a/tools/fv_mars_interface.F90 b/tools/fv_mars_interface.F90
 new file mode 100644
-index 0000000..3f75e0d
+index 0000000..ad954c7
 --- /dev/null
 +++ b/tools/fv_mars_interface.F90
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,75 @@
 + module fv_mars_interface_mod
 +
 +
@@ -3510,7 +4399,8 @@ index 0000000..3f75e0d
 +
 +
 +   public   get_cubed_sphere_mars, grid, agrid, bd, npx_global, &
-+            is, js, ie, je, isd, jsd, ied, jed
++            is, js, ie, je, isd, jsd, ied, jed, stretch_fac, &
++            bounded_domain, nested
 +
 +
 +
@@ -3523,6 +4413,8 @@ index 0000000..3f75e0d
 +   integer, save :: isd, ied, jsd, jed
 +   integer, save :: npx_global, ng
 +   real,  save   :: stretch_fac
++   logical, save :: bounded_domain
++   logical, save :: nested
 +
 +contains
 +
@@ -3530,19 +4422,12 @@ index 0000000..3f75e0d
 +
 +  subroutine get_cubed_sphere_mars( Atm  )
 +
-+!!!    type(fv_atmos_type), intent(in), target :: Atm(:)
 +    type(fv_atmos_type), intent(in) :: Atm
 +
-+!    type(fv_grid_bounds_type) :: bd
-+
-+!!!!      real, pointer, dimension(:,:,:) :: grid, agrid
-+!!!!      real, dimension(:,:,:) :: grid, agrid
 +
 +  integer              ::  n
 +  integer              ::  jbeg, jend
 +
-+!!!  integer :: is,  ie,  js,  je
-+!!!  integer :: isd, ied, jsd, jed
 +
 +
 +  n= 1
@@ -3562,18 +4447,12 @@ index 0000000..3f75e0d
 +  grid  = Atm%gridstruct%grid
 +  agrid = Atm%gridstruct%agrid
 +
-+!!  grid  => Atm(1)%gridstruct%grid
-+!!  agrid => Atm(1)%gridstruct%agrid
-+
-+
 +  bd=          Atm%bd
 +  stretch_fac= Atm%flagstruct%stretch_fac
-+  npx_global=  Atm%neststruct%npx_global
++  bounded_domain= Atm%gridstruct%bounded_domain
++  nested = Atm%gridstruct%nested
++  npx_global= Atm%flagstruct%npx
 +
-+
-+!!   write(*,*) '  Mars interface:  Cube indices: bd struct ', bd%is, bd%ie, bd%js, bd%je, bd
-+
-+!!   write(*,*) '  Mars interface:  npx_global, stretch ', npx_global, stretch_fac
 +
 +
 + end subroutine get_cubed_sphere_mars
@@ -3581,23 +4460,39 @@ index 0000000..3f75e0d
 +
 +
 + end module  fv_mars_interface_mod
+diff --git a/tools/fv_restart.F90 b/tools/fv_restart.F90
+index de076e8..b9b72db 100644
+--- a/tools/fv_restart.F90
++++ b/tools/fv_restart.F90
+@@ -363,6 +363,14 @@ contains
+                         hybrid, Atm(n)%delz, Atm(n)%ze0, &
+                         Atm(n)%flagstruct%adiabatic, Atm(n)%ks, Atm(n)%neststruct%npx_global, &
+                         Atm(n)%ptop, Atm(n)%domain, Atm(n)%tile_of_mosaic, Atm(n)%bd)
++                   if ( Atm(n)%flagstruct%fv_land .and. allocated(sgh_g) .and. allocated(oro_g) ) then
++                      do j=jsc,jec
++                         do i=isc,iec
++                            Atm(n)%sgh(i,j) = sgh_g(i,j)
++                            Atm(n)%oro(i,j) = oro_g(i,j)
++                         enddo
++                      enddo
++                   endif
+                 endif
+              elseif (grid_type == 4) then
+                 call init_double_periodic(Atm(n)%u,Atm(n)%v,Atm(n)%w,Atm(n)%pt, &
 diff --git a/tools/fv_surf_map.F90 b/tools/fv_surf_map.F90
-index 84252be..9a889fb 100644
+index b5e86c3..5fa667f 100644
 --- a/tools/fv_surf_map.F90
 +++ b/tools/fv_surf_map.F90
-@@ -26,6 +26,10 @@
-       use mpp_mod,           only: get_unit, input_nml_file, mpp_error
-       use mpp_domains_mod,   only: mpp_update_domains, domain2d
-       use constants_mod,     only: grav, radius, pi=>pi_8
-+#ifdef MARS_GCM
-+      use fms_mod,           only: read_data
-+      use fms_io_mod,        only: field_size
-+#endif
+@@ -32,7 +32,6 @@
+       use constants_mod,     only: grav, pi=>pi_8
+ #endif
  
+-
        use fv_grid_utils_mod, only: great_circle_dist, latlon2xyz, v_prod, normalize_vect
        use fv_grid_utils_mod, only: g_sum, global_mx, vect_cross
-@@ -67,8 +71,15 @@
-       integer:: n_del4 = -1
+       use fv_mp_mod,         only: mp_stop, mp_reduce_min, mp_reduce_max, is_master
+@@ -72,7 +71,14 @@
+       integer:: n_del4 = -1 !< number of passes of del-4 diffusion
  
  
 +#ifdef MARS_GCM
@@ -3606,13 +4501,12 @@ index 84252be..9a889fb 100644
 +      character(len=80) :: field_name
 +      integer           :: fld_dims(4)
 +#else
-       character(len=128)::  surf_file = "INPUT/topo1min.nc"
-       character(len=6)  ::  surf_format = 'netcdf'
+       character(len=128)::  surf_file = "INPUT/topo1min.nc" !< source lat-lon file for on-line topography creation and filtering
 +#endif
        logical :: namelist_read = .false.
  
-       real(kind=R_GRID) da_min
-@@ -83,6 +94,9 @@
+       real cos_grid
+@@ -86,6 +92,9 @@
        public  sgh_g, oro_g, zs_g
        public  surfdrv
        public  del2_cubed_sphere, del4_cubed_sphere, FV3_zs_filter
@@ -3622,7 +4516,7 @@ index 84252be..9a889fb 100644
  
        contains
  
-@@ -172,6 +186,23 @@
+@@ -175,6 +184,35 @@
        if (grid_number > 1) write(grid_string, '(A, I1)') ' g', grid_number
  
  
@@ -3633,8 +4527,20 @@ index 84252be..9a889fb 100644
 +         status = nf_open (surf_file, NF_NOWRITE, ncid)
 +         if (status .ne. NF_NOERR) call handle_err(status)
 +
-+         call field_size( trim(surf_file), trim(field_name), fld_dims )
-+         nlon= fld_dims(1);  nlat= fld_dims(2);
++!         call field_size( trim(surf_file), trim(field_name), fld_dims )
++!         nlon= fld_dims(1);  nlat= fld_dims(2);
++
++          status = nf_inq_dimid (ncid, 'lon', lonid)
++          if (status .ne. NF_NOERR) call handle_err(status)
++          status = nf_inq_dimlen (ncid, lonid, londim)
++          if (status .ne. NF_NOERR) call handle_err(status)
++          nlon = londim
++
++          status = nf_inq_dimid (ncid, 'lat', latid)
++          if (status .ne. NF_NOERR) call handle_err(status)
++          status = nf_inq_dimlen (ncid, latid, latdim)
++          if (status .ne. NF_NOERR) call handle_err(status)
++          nlat = latdim
 +
 +         if(is_master()) write(*,*) 'Mars Terrain dataset dims=', nlon, nlat
 +
@@ -3646,7 +4552,7 @@ index 84252be..9a889fb 100644
  !
  ! surface file must be in NetCDF format
  !
-@@ -207,6 +238,7 @@
+@@ -206,6 +244,7 @@
      else
         call error_mesg ( 'surfdrv','surface file '//trim(surf_file)//' not found !', FATAL )
      endif
@@ -3654,11 +4560,20 @@ index 84252be..9a889fb 100644
  
        allocate ( lat1(nlat+1) )
        allocate ( lon1(nlon+1) )
-@@ -284,6 +316,16 @@
-          if (is_master()) write(*,*) 'Terrain dataset =', nlon, 'jt=', jt
-          if (is_master()) write(*,*) 'igh (terrain ghosting)=', igh
+@@ -277,11 +316,24 @@
+       jend = min(jend+1, nlat)
  
-+
+       jt = jend - jstart + 1
+-      igh = nlon/8 + nlon/(2*(npx_global-1))
++      if (nested) then
++         igh = 6
++      else
++         igh = nlon/8 + nlon/(2*(npx_global-1))
++      endif
+ 
+       if (is_master()) write(*,*) 'Terrain dataset =', nlon, 'jt=', jt
+       if (is_master()) write(*,*) 'igh (terrain ghosting)=', igh
+ 
 +#ifdef MARS_GCM
 +         nread = 1;   start = 1
 +         nread(1) = nlon
@@ -3668,31 +4583,30 @@ index 84252be..9a889fb 100644
 +         ft(1:nlon,1:jt)= 1.0    ! all land points
 +
 +#else
-          status = nf_inq_varid (ncid, 'ftopo', ftopoid)
-          if (status .ne. NF_NOERR) call handle_err(status)
-          nread = 1;   start = 1
-@@ -293,6 +335,7 @@
-          allocate ( ft(-igh:nlon+igh,jt) )
-          status = nf_get_vara_real (ncid, ftopoid, start, nread, ft(1:nlon,1:jt))
-          if (status .ne. NF_NOERR) call handle_err(status)
+       status = nf_inq_varid (ncid, 'ftopo', ftopoid)
+       if (status .ne. NF_NOERR) call handle_err(status)
+       nread = 1;   start = 1
+@@ -291,6 +343,7 @@
+       allocate ( ft(-igh:nlon+igh,jt) )
+       status = nf_get_vara_real (ncid, ftopoid, start, nread, ft(1:nlon,1:jt))
+       if (status .ne. NF_NOERR) call handle_err(status)
 +#endif
  
-          do j=1,jt
-             do i=-igh,0
-@@ -303,7 +346,12 @@
-             enddo
+       do j=1,jt
+          do i=-igh,0
+@@ -301,7 +354,11 @@
           enddo
+       enddo
  
-+
 +#ifdef MARS_GCM
 +         status = nf_inq_varid (ncid, trim(field_name), htopoid)
 +#else
-          status = nf_inq_varid (ncid, 'htopo', htopoid)
+       status = nf_inq_varid (ncid, 'htopo', htopoid)
 +#endif
-          if (status .ne. NF_NOERR) call handle_err(status)
-          allocate ( zs(-igh:nlon+igh,jt) )
-          status = nf_get_vara_real (ncid, htopoid, start, nread, zs(1:nlon,1:jt))
-@@ -1486,6 +1534,232 @@
+       if (status .ne. NF_NOERR) call handle_err(status)
+       allocate ( zs(-igh:nlon+igh,jt) )
+       status = nf_get_vara_real (ncid, htopoid, start, nread, zs(1:nlon,1:jt))
+@@ -1481,6 +1538,232 @@
   end function inside_p4
  #endif
  
@@ -3925,127 +4839,20 @@ index 84252be..9a889fb 100644
   subroutine handle_err(status)
  #include <netcdf.inc>
        integer          status
-diff --git a/tools/fv_timing.F90 b/tools/fv_timing.F90
-index 3740a7a..ec820b9 100644
---- a/tools/fv_timing.F90
-+++ b/tools/fv_timing.F90
-@@ -1,26 +1,5 @@
--!***********************************************************************
--!*                   GNU Lesser General Public License
--!*
--!* This file is part of the FV3 dynamical core.
--!*
--!* The FV3 dynamical core is free software: you can redistribute it
--!* and/or modify it under the terms of the
--!* GNU Lesser General Public License as published by the
--!* Free Software Foundation, either version 3 of the License, or
--!* (at your option) any later version.
--!*
--!* The FV3 dynamical core is distributed in the hope that it will be
--!* useful, but WITHOUT ANYWARRANTY; without even the implied warranty
--!* of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
--!* See the GNU General Public License for more details.
--!*
--!* You should have received a copy of the GNU Lesser General Public
--!* License along with the FV3 dynamical core.
--!* If not, see <http://www.gnu.org/licenses/>.
--!***********************************************************************
-       module fv_timing_mod
- 
--      use mpp_mod, only: mpp_error, FATAL
- #if defined(SPMD)
-       use fv_mp_mod, only: is_master, mp_reduce_max
- #endif
-@@ -37,10 +16,10 @@
-       integer , private      :: tblk
- 
- #if defined(SPMD)
--      real(kind=8) , external       :: MPI_Wtime
-+      real , external       :: MPI_Wtime
- #endif
-       real , private       :: etime
--      real(kind=8) , private       :: totim
-+      real , private       :: totim
-       real , private       :: tarray(2)
-       type tms
-            private
-@@ -53,7 +32,9 @@
-       real , private       :: us_tmp1(nblks,2)
-       real , private       :: us_tmp2(nblks,2)
- 
--      logical, private :: module_initialized = .false.
-+!---- version number -----
-+      character(len=128) :: version = '$Id: fv_timing.F90,v 17.0.2.2.2.3.2.1 2013/01/24 18:16:53 Lucas.Harris Exp $'
-+      character(len=128) :: tagname = '$Name: siena_201305 $'
- 
-       contains
-          subroutine timing_init
-@@ -67,7 +48,6 @@
- 
-          integer  n
- 
--         if ( module_initialized ) return
- 
-          tblk=0
-          do n = 1, nblks
-@@ -92,7 +72,6 @@
- #   endif
- #endif
- 
--         module_initialized = .true.
-          end subroutine timing_init
- 
- 
-@@ -117,10 +96,6 @@
- 
-          integer ierr
- 
--         if ( .not. module_initialized ) then
--            call timing_init()
--         end if
--
-          UC_blk_name = blk_name
- 
-          call upper(UC_blk_name,len_trim(UC_blk_name))
-@@ -196,7 +171,6 @@
- 
- !         write(*,*) 'timing_off ', ctmp, tblk, tblk
-         if ( iblk .eq. 0 ) then
--            call mpp_error(FATAL,'fv_timing_mod: timing_off called before timing_on for: '//trim(blk_name))
- !           write(*,*) 'stop in timing off in ', ctmp
- !           stop
-         endif
-@@ -269,13 +243,13 @@
-         print *,                                  &
-         '  -----------------------------------------------------'
-         print *,                                  &
--        '     Block                    User time  System Time   Total Time   GID '
-+        '     Block          User time  System Time   Total Time'
-         print *,                                  &
-         '  -----------------------------------------------------'
- 
-         do n = 1, tblk
--           print '(3x,a20,2x,3(1x,f12.4), 2x, I6)', blkname(n),     &
--               tmp(n)%usr, tmp(n)%sys, tmp(n)%usr + tmp(n)%sys, gid
-+           print '(3x,a20,2x,3(1x,f12.4))', blkname(n),     &
-+               tmp(n)%usr, tmp(n)%sys, tmp(n)%usr + tmp(n)%sys
-         end do
- 
- 
 diff --git a/tools/init_hydro.F90 b/tools/init_hydro.F90
-index 8bcc995..61de2be 100644
+index 023f3ef..f172006 100644
 --- a/tools/init_hydro.F90
 +++ b/tools/init_hydro.F90
-@@ -22,7 +22,7 @@
- 
- module init_hydro_mod
- 
+@@ -24,7 +24,7 @@ module init_hydro_mod
+ #ifdef OVERLOAD_R4
+       use constantsR4_mod,      only: grav, rdgas, rvgas
+ #else
 -      use constants_mod,      only: grav, rdgas, rvgas
 +      use constants_mod,      only: grav, rdgas, rvgas, cp_air
+ #endif
        use fv_grid_utils_mod,  only: g_sum
        use fv_mp_mod,          only: is_master
-       use field_manager_mod,  only: MODEL_ATMOS
-@@ -34,6 +34,12 @@ module init_hydro_mod
+@@ -37,6 +37,12 @@ module init_hydro_mod
        implicit none
        private
  
@@ -4055,10 +4862,10 @@ index 8bcc995..61de2be 100644
 +
 +      public :: isotemp, do_isothermal
 +
-       public :: p_var, hydro_eq
+       public :: p_var, hydro_eq, hydro_eq_ext
  
  contains
-@@ -306,8 +312,79 @@ contains
+@@ -309,8 +315,79 @@ contains
    real p0, gztop, ptop
    integer  i,j,k
  
@@ -4138,7 +4945,7 @@ index 8bcc995..61de2be 100644
    if ( is_master() ) write(*,*) 'Initializing Earth'
  ! Given p1 and z1 (250mb, 10km)
          p1 = 25000.
-@@ -448,7 +525,7 @@ contains
+@@ -441,7 +518,7 @@ contains
        endif
  
     enddo    ! j-loop
@@ -4148,21 +4955,21 @@ index 8bcc995..61de2be 100644
   end subroutine hydro_eq
  
 diff --git a/tools/test_cases.F90 b/tools/test_cases.F90
-index e162f53..8fbe58e 100644
+index 37da15c..3c812e1 100644
 --- a/tools/test_cases.F90
 +++ b/tools/test_cases.F90
-@@ -36,7 +36,7 @@
+@@ -41,7 +41,7 @@
                                     hybrid_z_dz
  
-       use mpp_mod,           only: mpp_error, FATAL, mpp_root_pe, mpp_broadcast, mpp_sum
+       use mpp_mod,           only: mpp_error, FATAL, mpp_root_pe, mpp_broadcast, mpp_sum, mpp_sync
 -      use mpp_mod,           only: stdlog, input_nml_file
 +      use mpp_mod,           only: stdlog, input_nml_file, NOTE
        use fms_mod,           only: check_nml_error
        use mpp_domains_mod,   only: mpp_update_domains, domain2d
        use mpp_parameter_mod, only: AGRID_PARAM=>AGRID,CGRID_NE_PARAM=>CGRID_NE, &
-@@ -47,7 +47,10 @@
-      use mpp_mod, only: mpp_pe, mpp_chksum, stdout
- !!! END DEBUG CODE
+@@ -50,7 +50,10 @@
+       use fv_diagnostics_mod, only: prt_maxmin, ppme, eqv_pot, qcly0
+       use mpp_mod,            only: mpp_pe, mpp_chksum, stdout
        use fv_arrays_mod,         only: fv_grid_type, fv_flags_type, fv_grid_bounds_type, R_GRID
 -      use tracer_manager_mod,    only: get_tracer_index
 +      use tracer_manager_mod,    only: tr_get_tracer_names=>get_tracer_names, &
@@ -4170,19 +4977,19 @@ index e162f53..8fbe58e 100644
 +                                     set_tracer_profile, &
 +                                     get_tracer_index
        use field_manager_mod,     only: MODEL_ATMOS
+       use w_forcing_mod,         only: init_w_forcing
        implicit none
-       private
-@@ -655,6 +658,9 @@
- 
+@@ -695,6 +698,9 @@
        integer :: is, ie, js, je
        integer :: isd, ied, jsd, jed
-+!tracer init
+       integer :: counter
++      !tracer init
 +      character(len=64)    :: tracer_name
 +      integer :: ntracers
  
        is  = bd%is
        ie  = bd%ie
-@@ -1533,11 +1539,17 @@
+@@ -1503,11 +1509,17 @@
           alpha = 0.
  
     ! Initialize dry atmosphere
@@ -4201,7 +5008,7 @@ index e162f53..8fbe58e 100644
         if ( test_case==14 ) then
  ! Aqua-planet case: mean SLP=1.E5
           phis = 0.0
-@@ -1545,7 +1557,11 @@
+@@ -1515,7 +1527,11 @@
                         delp, ak, bk, pt, delz, area, ng, .false., hydrostatic, hybrid_z, domain)
         else
  ! Initialize topography
@@ -4213,7 +5020,23 @@ index e162f53..8fbe58e 100644
           phis = 0.0
           r0 = PI/9.
           p1(1) = PI/4.
-@@ -1597,7 +1613,14 @@
+@@ -1534,12 +1550,15 @@
+        endif
+ 
+       else if (test_case==11) then
++!      if (.not. gridstruct%nested) then
++       phis(is:ie,js:je) = 0.0
+        call surfdrv(npx, npy, gridstruct%grid_64, gridstruct%agrid_64,   &
+                     gridstruct%area_64, dx, dy, dxa, dya, dxc, dyc, &
+                     gridstruct%sin_sg, phis, &
+                     flagstruct%stretch_fac, gridstruct%nested, gridstruct%bounded_domain, &
+                     npx_global, domain, flagstruct%grid_number, bd)
+        call mpp_update_domains( phis, domain )
++!      endif
+ 
+        if ( hybrid_z ) then
+             rgrav = 1./ grav
+@@ -1567,11 +1586,17 @@
         u = 0.
         v = 0.
         q(:,:,:,:) = 0.
@@ -4229,7 +5052,11 @@ index e162f53..8fbe58e 100644
  
         call hydro_eq(npz, is, ie, js, je, ps, phis, dry_mass,  &
                       delp, ak, bk, pt, delz, area, ng, mountain, hydrostatic, hybrid_z, domain)
-@@ -2697,7 +2720,7 @@
+-
+       else if ( (test_case==12) .or. (test_case==13) ) then
+ 
+ 
+@@ -2600,7 +2625,7 @@
           enddo
           enddo
           enddo
@@ -4238,7 +5065,7 @@ index e162f53..8fbe58e 100644
        else if ( abs(test_case)==30 .or.  abs(test_case)==31 ) then
  !------------------------------------
  ! Super-Cell; with or with rotation
-@@ -2856,7 +2879,7 @@
+@@ -2749,7 +2774,7 @@
                enddo
             endif
          enddo
@@ -4247,7 +5074,15 @@ index e162f53..8fbe58e 100644
       elseif (test_case == 32) then
  
          call mpp_error(FATAL, ' test_case 32 not yet implemented')
-@@ -6467,7 +6490,7 @@ end subroutine terminator_tracers
+@@ -3648,6 +3673,7 @@
+                 moist_phys, hydrostatic, nwat, domain, adiabatic, .not.hydrostatic)
+ #endif
+ 
++
+      !Initialize tracers
+ 
+      if (checker_tr) then
+@@ -4962,7 +4988,7 @@ end subroutine terminator_tracers
                 enddo
              enddo
            enddo
@@ -4256,28 +5091,43 @@ index e162f53..8fbe58e 100644
        case ( 17 )
  !---------------------------
  ! Doubly periodic SuperCell, straight wind (v==0)
-@@ -6665,7 +6688,7 @@ end subroutine terminator_tracers
-                endif
-             enddo
-          endif
+@@ -5164,7 +5190,7 @@ end subroutine terminator_tracers
+               enddo
+            enddo
+         endif
 -
 +#endif MARS_GCM
-         case ( 101 )
+       case ( 19 )
+ !---------------------------
+ ! Revised Doubly periodic SuperCell, straight wind (v==0)
+@@ -5198,12 +5224,13 @@ end subroutine terminator_tracers
+         do k=1,npz
+            pk1(k) = (pk(i,j,k+1)-pk(i,j,k))/(kappa*(peln(i,k+1,j)-peln(i,k,j)))
+         enddo
+-
++#ifndef MARS_GCM
+         if (do_marine_sounding) then
+         call Marine_Sounding(npz, p00, pk1, ts1, qs1)
+         else
+         call SuperCell_Sounding_Marine(npz, p00, pk1, ts1, qs1)
+         endif
++#endif
  
- ! IC for LES
-@@ -7149,7 +7172,7 @@ end subroutine terminator_tracers
+         v(:,:,:) = 0.
+         w(:,:,:) = 0.
+@@ -6496,7 +6523,7 @@ end subroutine terminator_tracers
  
   end subroutine superK_u
  
 -
 +#ifndef MARS_GCM
   subroutine SuperCell_Sounding(km, ps, pk1, tp, qp)
-  use gfdl_cloud_microphys_mod, only: wqsat_moist, qsmith_init, qs_blend
+  use gfdl_mp_mod, only: qs_init, wqs, mqs
  ! Morris Weisman & J. Klemp 2002 sounding
-@@ -7280,6 +7303,7 @@ end subroutine terminator_tracers
- #endif
+@@ -6847,6 +6874,7 @@ end subroutine terminator_tracers
+  enddo
  
-  end subroutine SuperCell_Sounding
+  end subroutine Marine_Sounding
 +#endif
  
   subroutine DCMIP16_BC(delp,pt,u,v,q,w,delz,&

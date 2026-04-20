@@ -3,11 +3,16 @@ module  surface_flux_mod
 !  calculate surface drag, heat and momentum fluxes
 !
 
-use   fms_mod, only: FATAL, close_file, mpp_pe, mpp_root_pe, write_version_number
 
-use   fms_mod, only: check_nml_error, open_namelist_file, stdlog
-
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+                             
 use fms2_io_mod,            only:  file_exists
+use   mpp_domains_mod, only: domain2d
+use mpp_mod, only: input_nml_file
 #ifdef fv3_turb
 use   monin_obukhov_mod, only: mo_drag, mo_profile
 #endif
@@ -305,16 +310,11 @@ subroutine surface_flux_init
 !  local vars 
   integer :: unit, ierr, io
 
-! read namelist
-if ( file_exists('input.nml')) then
-    unit = open_namelist_file ()
-    ierr=1; 
-    do while (ierr /= 0)
-        read  (unit, nml=surface_flux_nml, iostat=io, end=10)
-        ierr = check_nml_error(io,'surface_flux_nml')
-    enddo
-10   call close_file (unit)
-endif
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=surface_flux_nml, iostat=io)
+ierr = check_nml_error(io,'surface_flux_nml')
 
 ! write version number
 call write_version_number(version, tagname)

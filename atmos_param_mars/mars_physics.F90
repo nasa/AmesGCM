@@ -40,15 +40,22 @@ use constants_mod,          only: KAPPA, CP_AIR, RDGAS, GRAV, PI, RADIAN,       
 use astronomy_mod,          only: astronomy_init,  mars_calender
 use time_manager_mod,       only: time_type, get_time
 
+
+use fms_mod,                only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use fms2_io_mod,            only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
 use mpp_domains_mod,        only: domain2d
+use mpp_mod,                only: input_nml_file
 
-use fms_mod,                only: error_mesg, FATAL,                                    &
-                                  open_namelist_file, check_nml_error,                  &
-                                  mpp_pe, mpp_root_pe, close_file,                      &
-                                  write_version_number, stdlog,                         &
-                                  uppercase, read_data, write_data, field_size
-
-use fms2_io_mod,            only: file_exists
 use time_manager_mod,       only: time_type, get_time
 use diag_manager_mod,       only: register_diag_field, send_data
 use field_manager_mod,      only: MODEL_ATMOS, parse, find_field_index
@@ -77,10 +84,15 @@ use mars_surface_mod,       only: mars_surface_init, mars_surface_end,          
                                   tsoil, t_surf, sfc_snow, sfc_frost,                   &
                                   id_frost, sfc_roughness, sfc_frost_mom,               &
                                   id_frost_mom, sfc_h2o2_chem, id_sfc_h2o2_chem,        &
-                                  sfc_frost_blk, id_frost_blk
+                                  sfc_frost_blk, id_frost_blk,                          &
+                                  cumulative_prec_blk, cumulative_prec_mconv,           &
+                                  do_liquidwater_albedo 
 
 use update_mars_atmos_mod,  only: pass2, co2_condense, legacy_convect
 use testconserv_mod
+
+use moist_conv_mod
+use sat_vapor_pres_mod
 
 use ames_pbl_interface,     only: ames_pbl
 use pblmod_mgcm,            only: amespbl_nml_read
@@ -96,8 +108,6 @@ use null_physics_mod, only: dust_source_sink, dust_source_init, dust_source_end
 use null_physics_mod, only: cloud_physics, cloud_physics_init, cloud_physics_end, &
 		  id_wcol, id_cldcol, id_cld_r, id_rsat, cldcol, wcol, &
           photochem_driver
-use null_physics_mod, only: blkh2o_driver,blkh2o_driver_init
-use null_physics_mod, only: co2micro_driver,co2micro_driver_init
 #else
 use cloud_physics_mod,      only: cloud_physics_init, cloud_physics_end, &
                                  cloud_physics
@@ -107,6 +117,8 @@ use dust_source_mod,        only: dust_source_sink, dust_source_init, &
 use tagging_method_mod,     only: tagging_main
 #endif
 
+use blkh2omod_mgcm, only: blkh2o_driver,blkh2o_driver_init
+use co2micromod_mgcm, only: co2micro_driver,co2micro_driver_init
 use cg_drag_mod,            only: cg_drag_init, cg_drag_calc, cg_drag_end
 use  micromod_mgcm,         only: micro_driver,micro_driver_init
 use  sedim_mod,             only: sedim_driver,sedim_driver_init
@@ -127,7 +139,7 @@ private
 
 
 public  :: mars_physics, mars_physics_init, mars_physics_end, do_mars_surface,          &
-          do_bin_water_cycle, do_dust_source_sink
+          do_bin_water_cycle, do_dust_source_sink, do_moist_convective_adjust
 public  :: gascol
 public  :: do_qmass
 
@@ -168,6 +180,7 @@ logical :: do_simple_radiation = .false.       ! flag: do simple mars radiation
 logical :: do_teq_z = .false.                  ! flag: do newton damping forcing
 logical :: do_convective_adjust = .true.       ! flag: do convective adjustment
 logical :: do_fv3_convect = .true.             ! flag: do original full column adjustment
+logical :: do_moist_convective_adjust = .false. ! flag: do moist convective adjustment
 
 logical :: do_co2_condensation_cycle = .true.  ! flag: do mass feedback from condensation
 logical :: do_co2_condensation = .true.        ! flag: do atmospheric CO2 condensation
@@ -211,6 +224,7 @@ namelist /mars_physics_nml/  no_forcing, t_zero, t_strat, delh, delv, eps,      
                              do_vert_diff, do_mars_radiation,                           &
                              do_simple_radiation, do_teq_z,                             &
                              do_mars_surface, do_convective_adjust,                     &
+                             do_moist_convective_adjust,                                &
                              GW_drag_TOG, diffusion_smooth,                             &
                              do_co2_condensation_cycle, do_co2_condensation,            &
                              form_co2_clouds,                                           &
@@ -246,15 +260,14 @@ integer :: id_tsfc, id_stress, id_stress_gw, id_udt_cgwd, id_vdt_cgwd,id_tdt_cgw
            id_precip, id_wflux_vap_blk
 integer :: id_udt_topo, id_vdt_topo
 integer :: id_uv, id_vt, id_uw, id_dnflux
-integer :: id_rdt_h2o2,id_cond_mass,id_rdt_subl_bin,id_rdt_subl_blk,id_rdt_blkh2o
+integer :: id_rdt_h2o2,id_cond_mass,id_rdt_subl_bin,id_rdt_subl_blk
 integer :: id_delz
-
-integer :: id_tdt_mconv, id_rdt_mconv, id_udt_mconv, id_vdt_mconv, id_raindt_mconv,     &
-                                       id_snowdt_mconv
+integer :: id_tdt_mconv
 
 integer, dimension(:), allocatable  :: id_rdt_pbl, id_rdt_adj, id_rdt_dst,              &
                                        id_rdt_micro, id_rdt_dif, id_rdt_hrad,           &
-                                       id_rdt_subl, id_rdt_sedim, id_rdt_coag
+                                       id_rdt_subl, id_rdt_sedim, id_rdt_coag,          &
+                                       id_rdt_mconv, id_rdt_blkh2o
 integer, dimension(:), allocatable  :: id_gascol, id_pchem
 
 real, dimension(:,:,:), allocatable :: gascol
@@ -264,6 +277,7 @@ real, dimension(:,:,:), allocatable, save   ::  diff_m_new, diff_t_new
 real, dimension(:,:,:), allocatable, save   ::  teq, zteq, teqin, pteq
 real, dimension(:,:), allocatable, save     ::  rhouch_save
 integer, dimension(:,:),allocatable, save   ::  k_pbl_save
+logical, dimension(:), allocatable  :: tracers_in_mca
 
 logical ::  mcpu0
 
@@ -364,8 +378,7 @@ real, dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rdt_rad, rdt_pbl, rd
 real, dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rdt_pchem
 real, dimension(size(r,1),size(r,2),size(r,3))  :: tdt_pbl, udt_pbl, vdt_pbl, tdt_rad, tdt_micro
 real, dimension(size(r,1),size(r,2),size(r,3))  :: tdt_adj, udt_adj, vdt_adj
-real, dimension(size(r,1),size(r,2),size(r,3))  :: tdt_mconv, udt_mconv, vdt_mconv
-real, dimension(size(r,1), size(r,2)) :: snowdt_mconv
+real, dimension(size(r,1),size(r,2),size(r,3))  :: tdt_mconv
 real, dimension(size(r,1),size(r,2),size(r,3))  :: tdt_dif, udt_dif, vdt_dif
 real, dimension(size(r,1),size(r,2),size(r,3))  :: tdt_top, udt_top, vdt_top
 real, dimension(size(r,1),size(r,2),size(r,3))  :: tdt0, udt0, vdt0
@@ -398,6 +411,13 @@ real, dimension(size(t,1),size(t,2),size(t,3))  :: qarray,      &       ! water 
                                                    qdt                  ! water vapor tendency [kg/kg/s]
 real, dimension(size(t,1),size(t,2),size(t,3),size(r,4)) :: rini        ! initial tracer field
 
+real, dimension(size(t,1),size(t,2),size(t,3)) :: rinit
+real, dimension(size(t,1),size(t,2),size(t,3)) :: rdt_mconvout
+real, dimension(size(t,1),size(t,2),size(t,3),size(r,4)) :: qtrmca
+real, dimension(size(t,1),size(t,2),size(t,3),size(r,4)) :: rini2
+real, dimension(size(t,1),size(t,2),size(t,3))  :: tini        ! initial temp field
+real, dimension(size(t,1),size(t,2))      :: rain_am, snow_am
+logical, dimension(size(t,1),size(t,2))      :: coldT
 real, dimension(size(t,1),size(t,2))            :: swfsfc,      &       ! surface visible flux [W/m2]
                                                    lwfsfc               ! surface infrared flux [W/m2]
 logical, dimension(size(t,1),size(t,2),size(t,3)+1) :: lmask            ! local mask field
@@ -418,6 +438,7 @@ real, dimension(size(t,1),size(t,2))    :: snow,                &       ! surfac
 real, dimension(size(t,1),size(t,2))    :: frost_mom,           &       ! moment micro surface water ice [kg/m2]
                                            frost_eff,           &       ! bin, bulk, or moment depending on compiler flag [kg/m2]
                                            frost_blk                    ! bulk surface water ice [kg/m2]
+real, dimension(size(t,1),size(t,2),1)  :: frost_blk0                   ! initial bulk water ice field for conservation [kg/m2] 
 real, dimension(size(t,1),size(t,2), nice_mass)  :: frost_mom0, &     ! initial water ice field for conservation [kg/m2]
                                                     frost_field         ! temporary water ice field for updates [kg/m2]
 real, dimension(size(t,1),size(t,2), ndust_mass) :: sfc_dst_mom0      ! initial dust field for conservation [kg/m2]
@@ -515,6 +536,7 @@ rdt_micro = 0.d0
 rdt_blkh2o   = 0.d0
 rdt_h2o2  = 0.d0
 rdt_mconv = 0.d0  
+rdt_mconvout = 0.d0
 cond_mass = 0.d0
 rdt_pchem = 0.d0
 rdt_sedim = 0.d0
@@ -529,23 +551,27 @@ tdt_rad   = 0.d0
 tdt_dif   = 0.d0
 tdt_micro = 0.d0
 tdt_co2   = 0.d0
-tdt_mconv = 0.d0  
+tdt_mconv = 0.d0 
 tdt_blkh2o   = 0.d0
 udt       = 0.d0
 udt_pbl   = 0.d0
 udt_dif   = 0.d0
 udt_adj   = 0.d0
-udt_mconv = 0.d0   
 vdt       = 0.d0
 vdt_pbl   = 0.d0
 vdt_dif   = 0.d0
 vdt_adj   = 0.d0
-vdt_mconv = 0.d0   
 udt_dif   = 0.d0
 vdt_dif   = 0.d0
 tg_tnd    = 0.d0
 latent_blk = 0.d0
 dlatent_blk = 0.d0
+tini = 0.d0
+rini = 0.d0
+rini2 = 0.d0
+rinit = 0.d0
+rain_am = 0.d0
+snow_am = 0.d0
 
 lifting_dust = .false.
 
@@ -590,6 +616,7 @@ if (do_moment_water) then
     sfc_h2o2_chem0 = sfc_h2o2_chem(is:ie,js:je)
 elseif (do_bulk_water) then
     frost_eff(:,:) = sfc_frost_blk(is:ie,js:je,1)
+    frost_blk0   = sfc_frost_blk(is:ie,js:je,:)
 else  !bin
     frost_eff(:,:) = sfc_frost(is:ie,js:je,1)
 endif
@@ -606,7 +633,7 @@ if (no_forcing) then
     if (do_vert_diff) then
         dnflux = 0.0
         tsurf  = 0.0
-        call diffuse(is, js, dt, Time, lon, lat,        &
+        call diffuse(is, js, id, jd, kd, ntp, dt, Time, lon, lat,        &
                 p_half, p_full, z_half, z_full, tsurf,  &
                 u, v, t, r(:,:,:,1:ntp),                &
                 u, v, t, r(:,:,:,1:ntp),                &
@@ -646,7 +673,7 @@ if (id_delz > 0) used = send_data (id_delz, delz, Time, is, js)
 !-----------------------------------------------------------------------
 
 
-call rayleigh_damping (ps, p_full, lat, u+udt*dt, v+vdt*dt, utnd, vtnd, mask=mask)
+call rayleigh_damping (id, jd, kd, ps, p_full, lat, u+udt*dt, v+vdt*dt, utnd, vtnd, mask=mask)
 
 if (do_conserve_energy) then
     ttnd = -((um+.5*utnd*dt)*utnd + (vm+.5*vtnd*dt)*vtnd)/CP_AIR
@@ -680,8 +707,8 @@ if (do_mars_surface) then
     tgrnd(:,:,:) = tsoil(is:ie,js:je,:)
     zo(:,:)      = sfc_roughness(is:ie,js:je)
     cosz(:,:)    = 1.0                                      ! Currently, albedo does not depend on solar zenith angle
-    call albedo_calc(is, js, lon, lat, cosz, tsurf, ps,     &
-                     snow, frost_eff, albedo, sfc_emiss)
+    call albedo_calc(is, js, id, jd, lon, lat, cosz, tsurf, ps,     &
+                     snow, frost_eff, albedo, sfc_emiss, do_liquidwater_albedo)
 else
     tsurf(:,:)     = 170.0
     albedo(:,:)    = 0.25
@@ -705,27 +732,26 @@ ttnd(:,:,:)  = 0.0
 
 if( do_mars_radiation  ) then
 
-    call radiation_driver ( is, js, lon, lat, dt, Time, p_half, p_full, z_half,   &
+    call radiation_driver ( is, js, id, jd, kd, ntrace, lon, lat, dt, Time, p_half, p_full, z_half,   &
                            tsurf, albedo, sfc_emiss, t, r, tdt, rdt,   &
                            swfsfc, lwfsfc, cosz, tdtlw, tdt_rad, taudust, &
-!                           taucloud, tauco2cloud, taudust_mom, taudust_fix, p_ref )
-                           taucloud, taudust_mom, taudust_fix, p_ref )
+                           taucloud, tauco2cloud, taudust_mom, taudust_fix, p_ref )
     dnflux = swfsfc + lwfsfc
 
 else if (do_simple_radiation) then
-    call simple_rad_driver  (is, js, lon, lat, dt, Time, p_half, p_full,                    &
+    call simple_rad_driver  (is, js, id, jd, kd, ntrace, lon, lat, dt, Time, p_half, p_full,                    &
                             tsurf, albedo, sfc_emiss, t+tdt*dt, r+rdt*dt, tdt_rad, rdt_rad, &
                             swfsfc, lwfsfc, cosz)
     dnflux = swfsfc + lwfsfc
 
 else if (do_teq_z)  then
     ! thermal forcing for held & suarez (1994) benchmark calculation
-    call newtonian_damping_z (lat, z_full, t+tdt*dt, zteq, teqin, teq, tdt_rad, mask)
+    call newtonian_damping_z (id, jd, kd, lat, z_full, t+tdt*dt, zteq, teqin, teq, tdt_rad, mask)
     if (id_teq > 0) used = send_data (id_teq, teq(is:ie,js:je,:), Time, is, js)
     dnflux(:,:) = 0.0
 
 else
-    call newtonian_damping (lat, ps, p_full, t+tdt*dt, teq(is:ie,js:je,:), tdt_rad, mask)
+    call newtonian_damping (id, jd, kd, lat, ps, p_full, t+tdt*dt, teq(is:ie,js:je,:), tdt_rad, mask)
     if (id_teq > 0) used = send_data (id_teq, teq(is:ie,js:je,:), Time, is, js)
     dnflux(:,:) = 0.0
 
@@ -749,28 +775,32 @@ if (do_mars_surface) then
     !************************************************
     ! UPDATE WATER VAPOR : Sublimation / Condensation
     !************************************************
+    if (do_moment_water) then
     frost_field(:,:,:) = sfc_frost_mom(is:ie,js:je,:)
-    call update_water(is, ie, js, je, kd, lat, lon, dt, p_half, tsurf, rhouch_save,         &
+    call update_water(is, ie, js, je, kd, ntrace, lat, lon, dt, p_half, tsurf, rhouch_save,         &
                       k_pbl_save, r(:, :, :, :), rdt(:, :, :, :), nh2o_mom, frost_field,    &
                       wflux_vap, rdt_subl, sols)
     sfc_frost_mom(is:ie,js:je,:) = frost_field
+    endif
 
     if (id_wflux_vap > 0) used = send_data (id_wflux_vap, wflux_vap, Time, is, js)
 
+    if (do_bin_water_cycle) then
     frost_field(:,:,:) = sfc_frost(is:ie,js:je,:)
-    call update_water_fv3(is, ie, js, je, kd, lat, lon, dt, p_half, tsurf, rhouch_save,     &
+    call update_water_fv3(is, ie, js, je, kd, ntrace, lat, lon, dt, p_half, tsurf, rhouch_save,     &
                           k_pbl_save, r(:, :, :, :), rdt(:, :, :, :), nh2o_bin,             &
                           frost_field(:, :, 1), wflux_vap, rdt_subl_bin)
     sfc_frost(is:ie,js:je,1) = frost_field(:,:,1)
+    endif
 
     if (id_wflux_vap_bin > 0) used = send_data (id_wflux_vap_bin, wflux_vap, Time, is, js)
 
     if (do_bulk_water) then
     frost_field(:,:,:) = sfc_frost_blk(is:ie,js:je,:)
-    call update_water_blk(is, ie, js, je, kd, lat, lon, dt, p_half, tsurf, rhouch_save,     &
+    call update_water_blk(is, ie, js, je, kd, ntrace, lat, lon, dt, p_half, tsurf, rhouch_save,     &
                           k_pbl_save, r(:, :, :, :), rdt(:, :, :, :), nh2o_blk,             &
-                          frost_field(:, :, 1), wflux_vap, rdt_subl_blk)!,                    &
-!                          latent_blk, dlatent_blk)
+                          frost_field(:, :, 1), wflux_vap, rdt_subl_blk,                    &
+                          latent_blk, dlatent_blk)
     sfc_frost_blk(is:ie,js:je,1) = frost_field(:,:,1)
     endif
 
@@ -836,7 +866,7 @@ if (do_mars_surface) then
         if (do_ames_pbl) then
             rkh = 0.0
 
-            call ames_pbl(is, js, dt, ps,                               &
+            call ames_pbl(id, jd, kd, ntrace, dt, ps,                               &
                    p_half, p_full, z_half,                              &
                    diff_m, diff_t, &
                    u, v, t, tsurf, r(:,:,:,:),                          & !qarray,     &
@@ -855,13 +885,12 @@ if (do_mars_surface) then
             dtau_dv     = -dragm
             diff_m_new(is:ie,js:je,:) = diff_m(:,:,:)
             diff_t_new(is:ie,js:je,:) = diff_t(:,:,:)
-            lmask(:,:,1:kd) = .true.
-            lmask(:,:,kd+1) = .false.
+            lmask(:,:,:) = .true.
 
-            outtmp(:,:,1:kd) = diff_t(:,:,1:kd)
-            outtmp(:,:,kd+1) = 0.0
+            outtmp(:,:,1) = 0.0
+            outtmp(:,:,2:kd+1) = diff_t(:,:,1:kd)
             if (id_difft_ames > 0) used = send_data (id_difft_ames, outtmp(:,:,:), Time, is, js, 1, mask=lmask)
-            outtmp(is:ie,js:je,1:kd) = diff_m(:,:,1:kd)
+            outtmp(is:ie,js:je,2:kd+1) = diff_m(:,:,1:kd)
             if (id_diffm_ames > 0) used = send_data (id_diffm_ames, outtmp(:,:,:), Time, is, js, 1, mask=lmask)
 
             rdt = rdt + rdt_pbl
@@ -976,9 +1005,10 @@ if (do_mars_surface) then
         if (id_tsfc > 0) used = send_data (id_tsfc, tsurf, Time, is, js)
 
 
-        call progts(is, js, dt, Time, lon, lat,  &
+        call progts(is, ie, js, je, kd, dt, Time, lon, lat,  &
                 ps, p_half, dnflux, tgrnd, snow, subday, tg_tnd, shflx, &
-                dsens_datmos, dsens_dsurf, evap, devap_datmos, dedq_surf)
+                dsens_datmos, dsens_dsurf, evap, devap_datmos, dedq_surf, &
+                latent_blk, dlatent_blk)
 
         snow=snow+subday
         tgrnd=tgrnd+tg_tnd
@@ -1006,14 +1036,14 @@ if (do_mars_surface) then
     if (do_co2_condensation) then
 
         if (form_co2_clouds) then
-            call co2micro_driver(is,js,Time,p_half,p_full,t,tdt,r,rdt, &
+            call co2micro_driver(is,ie,js,je,kd,ntrace,Time,p_half,p_full,t,tdt,r,rdt, &
                     stress,tsurf,dt,rhouch,rdt_co2micro,precip,dmass,rkh, &
                     tdt_co2,checkcons)
 
             rdt = rdt+rdt_co2micro
 
         else
-            call co2_condense(is, js, dt, Time, t, tdt,  &
+            call co2_condense(is, ie, js, je, kd, dt, Time, t, tdt,  &
                           p_half, p_full, precip, dmass, tdt_co2)
         endif
 
@@ -1078,7 +1108,7 @@ if (do_mars_surface) then
 else    ! ---------- No Mars surface physics, hence just atmospheric diffusion  ------------------
      dmass(:,:,:) = 0.0
      if (do_vert_diff) then
-        call diffuse(is, js, dt, Time, lon, lat,                                            &
+        call diffuse(is, js, id, jd, kd, ntp, dt, Time, lon, lat,                                            &
                      p_half, p_full, z_half, z_full, tsurf,                                 &
                      u+udt*dt, v+vdt*dt, t+tdt*dt, r(:,:,:,1:ntp)+rdt(:,:,:,1:ntp)*dt,      &
                      u+udt*dt, v+vdt*dt, t+tdt*dt, r(:,:,:,1:ntp)+rdt(:,:,:,1:ntp)*dt,      &
@@ -1107,7 +1137,7 @@ endif   ! do mars surface
  if (do_pchem)   then   ! photochemistry is on
     mcpu0 = (mpp_pe() == mpp_root_pe())
 
-    call photochem_driver(is, ie, js, je, kd, lon, lat, p_half, p_full, delp,               &
+    call photochem_driver(is, ie, js, je, kd, ntrace, lon, lat, p_half, p_full, delp,               &
                            t, tdt, Time, dt, r, rdt, rdt_pchem, do_qmass)
     ! Tendencies:
     rdt = rdt + rdt_pchem
@@ -1121,7 +1151,7 @@ endif   ! do mars surface
   !************************************************
   ! UPDATE H2O2 : Condensation
   !************************************************
-    call  h2o2cond(is, js, kd, lat, lon, dt, p_half, p_full, t, nh2o2, cond_mass, r, rdt, rdt_h2o2)
+    call  h2o2cond(is, ie, js, je, kd, ntrace, lat, lon, dt, p_half, p_full, t, nh2o2, cond_mass, r, rdt, rdt_h2o2)
 
     ! Tendencies:
     rdt(:,:,:,nh2o2) = rdt(:,:,:,nh2o2) + rdt_h2o2(:,:,:)
@@ -1155,9 +1185,10 @@ if (nml_switch(GW_drag_TOG,1)) then     ! Palmer 1986
     udt_top = 0.
     vdt_top = 0.
     mcpu0   = (mpp_pe() == mpp_root_pe())
-    call palmer_drag(dt, u+udt*dt, v+vdt*dt, t+tdt*dt,      &
-                     p_full, p_half, z_full, z_half,        &
-                     udt_top, vdt_top, Time)
+    call palmer_drag(is, ie, js, je, kd, &
+                    dt, u+udt*dt, v+vdt*dt, t+tdt*dt,      &
+                    p_full, p_half, z_full, z_half,        &
+                    udt_top, vdt_top, Time)
 
     udt = udt + udt_top * topo_drag_fac
     vdt = vdt + vdt_top * topo_drag_fac
@@ -1190,12 +1221,12 @@ endif
 
 if (do_convective_adjust) then
     if (do_fv3_convect) then
-        call pass2(is, js, dt, Time, u, v, t, r,        &
+        call pass2(is, ie, js, je, kd, ntrace, dt, Time, u, v, t, r,        &
                    udt, vdt, tdt, rdt,                  &
                    udt_adj, vdt_adj, tdt_adj, rdt_adj,  &
                    delp, p_half, p_full)
     else
-        call legacy_convect(is, js, dt, kd, u, v, t, r,         &
+        call legacy_convect(is, ie, js, je, ntrace, dt, kd, u, v, t, r,         &
                             udt, vdt, tdt, rdt,                 &
                             udt_adj, vdt_adj, tdt_adj, rdt_adj, &
                             delp, p_half, p_full)
@@ -1212,6 +1243,63 @@ if (checkcons) then
     call testneg(is, ie, js, je, kd, r+rdt*dt, nh2o_mom, -1.d-15, 'convadj_vap')
     call checkconserv(is, ie, js, je, kd, p_half, r, frost_mom0, sfc_dst_mom0,          &
                       p_half, r+rdt*dt, sfc_frost_mom, sfc_dust_mass(:,:,:), 'convadj')
+endif
+
+
+!-----------------------------------------------------------------------
+!    Moist convective adjustment
+!-----------------------------------------------------------------------
+
+! check water vapor fields to pass into moist convection scheme
+if (do_moist_convective_adjust) then
+
+    if (do_moment_water) then
+       nh2o_mconv =  nh2o_mom
+    elseif (do_bulk_water) then
+       nh2o_mconv = nh2o_blk       
+    else  !bin
+       nh2o_mconv = nh2o_bin
+!       nh2o_mconv = nh2o_blk
+    endif
+
+    !set arrays that will update
+    tini=t+tdt*dt
+    rini=r+rdt*dt
+    rini2=rini
+    rinit=rini(:,:,:,nh2o_mconv)
+    coldT(:,:) = 0
+    qtrmca(:,:,:,:) = 0.0
+
+    ! fill in where temp is below freezing for AM4 moist convection scheme
+    do i=is, ie
+      do j=js, je
+        if (tini(i,j,kd) .LT. 273.15) then
+           coldT(i,j)=1
+        endif 
+      end do
+    end do
+
+    ! call AM4 moist convection scheme
+    call moist_conv(tini,rini(:,:,:,nh2o_mconv), p_full,p_half, coldT, &
+                tdt_mconv, rdt_mconvout, rain_am, snow_am, &
+                1.0/dt, Time, is, js, rini2, qtrmca)
+
+    !update surface array and cumulative precipitation arrays
+    sfc_frost_blk(is:ie,js:je,1)=sfc_frost_blk(is:ie,js:je,1)+(rain_am(:,:)+snow_am(:,:))*dt
+    cumulative_prec_blk(is:ie,js:je,1) = cumulative_prec_blk(is:ie,js:je,1)+(rain_am(:,:)+snow_am(:,:))*dt
+    cumulative_prec_mconv(is:ie,js:je,1) = cumulative_prec_mconv(is:ie,js:je,1)+(rain_am(:,:)+snow_am(:,:))*dt
+
+    cumulative_prec_blk(is:ie,js:je,2) = cumulative_prec_blk(is:ie,js:je,2)+(rain_am(:,:)*dt)
+    cumulative_prec_mconv(is:ie,js:je,2) = cumulative_prec_mconv(is:ie,js:je,2)+(rain_am(:,:)*dt)
+
+    cumulative_prec_blk(is:ie,js:je,3) = cumulative_prec_blk(is:ie,js:je,3)+(snow_am(:,:)*dt)
+    cumulative_prec_mconv(is:ie,js:je,3) = cumulative_prec_mconv(is:ie,js:je,3)+(snow_am(:,:)*dt)
+
+    rdt_mconv(:,:,:,nh2o_mconv)=rdt_mconv(:,:,:,nh2o_mconv)+rdt_mconvout
+
+    tdt = tdt + tdt_mconv
+    rdt = rdt + rdt_mconv
+
 endif
 
 
@@ -1238,7 +1326,7 @@ stress(:,:) = dragm(:,:) * wind(:,:)
 if (id_stress > 0) used = send_data (id_stress, stress, Time, is, js)
 
 if (do_moment_dust) then
-    call dust_update (is, js, lon, lat, dt, Time,                               &
+    call dust_update (is, js, ie, je, kd, ntrace, lon, lat, dt, Time,                               &
                       p_half, p_full, p_pbl, k_pbl, tsurf, snow,                &
                       sfc_frost_mom(is:ie,js:je,1),stress, taudust_mom, taudust_fix, t,    &
                       tdt, r, rdt, sens, rdt_dst, source_mom, lifting_dust)
@@ -1252,7 +1340,7 @@ if (do_moment_dust) then
     endif
 
     if (do_coagul_dst) then
-        call coagul_main(is, js, lon, lat, dt, t+tdt*dt, p_half, p_full, r+rdt*dt, rdt_coag)
+        call coagul_main(is, js, ie, je, kd, ntrace, lon, lat, dt, t+tdt*dt, p_half, p_full, r+rdt*dt, rdt_coag)
         !! Update tracers
         rdt = rdt + rdt_coag
     endif
@@ -1260,7 +1348,7 @@ if (do_moment_dust) then
 endif
 
 if (do_dust_source_sink .and. ntrace > 1) then
-    call dust_source_sink (is, js, lon, lat, dt, Time,                  &
+    call dust_source_sink (is, js, ie, je, kd, ntrace, lon, lat, dt, Time,                  &
                         p_half, p_full, tsurf,  snow,  stress,          &
                         k_pbl, source_mom, t, tdt, r, rdt, rdt_dss)
     rdt = rdt + rdt_dss
@@ -1277,7 +1365,7 @@ if (do_bin_water_cycle) then
     enddo
         rdt_cld = 0.
         frost(:,:) = sfc_frost(is:ie,js:je,1)
-    call cloud_physics (is, js, lon, lat, dt, time, p_half, p_full,     &
+    call cloud_physics (is, js, ie, je, kd, ntrace, lon, lat, dt, time, p_half, p_full,     &
                         tsurf, frost, tcol, r+rdt*dt, rdt_cld, drag_q)
 
     rdt = rdt + rdt_cld
@@ -1287,7 +1375,7 @@ if (do_bin_water_cycle) then
 endif
 
 if (do_moment_water) then
-    call micro_driver(is, js, Time, p_half, p_full, t, tdt, r, rdt, stress, tsurf, dt,  &
+    call micro_driver(is, js, ie, je, kd, ntrace, Time, p_half, p_full, t, tdt, r, rdt, stress, tsurf, dt,  &
                       rhouch, rdt_micro, tdt_micro, checkcons)
     rdt = rdt + rdt_micro
     tdt = tdt + tdt_micro
@@ -1301,8 +1389,8 @@ endif
 
 if (do_bulk_water .and. form_bulk_clouds) then
     ! sfc_frost_blk and cumulative_prec_blk updated in blkh2o_driver
-    call blkh2o_driver(is, js, Time, p_half, p_full, t, tdt, r, rdt, stress, tsurf, dt,  &
-                      rhouch, rdt_blkh2o, rkh, tdt_blkh2o, checkcons)
+    call blkh2o_driver(is, js, ie, je, kd, ntrace, Time, p_half, p_full, t, tdt, r, rdt, tsurf, dt,  &
+                      rdt_blkh2o, rkh, tdt_blkh2o, checkcons)
     rdt = rdt + rdt_blkh2o
     tdt = tdt + tdt_blkh2o
     if (id_frost_blk > 0) used = send_data (id_frost_blk, sfc_frost_blk, time, is, js)
@@ -1310,7 +1398,7 @@ endif
 
 
 if (do_moment_dust .and. do_moment_sedim) then 
-    call sedim_driver(is, js, Time, p_half, p_full, t, tdt, r,     &
+    call sedim_driver(is, js, ie, je, kd, ntrace, Time, p_half, p_full, t, tdt, r,     &
                                        rdt, tsurf, dt, rkh, rdt_sedim,              &
                                        lifting_dust, checkcons)
     rdt = rdt + rdt_sedim
@@ -1405,6 +1493,12 @@ do n= 1, ntrace
     if (id_rdt_hrad(n) > 0)     used = send_data (id_rdt_hrad(n),                   &
                                                  rdt_rad(is:ie,js:je,:,n),          &
                                                  time, is, js)
+    if (id_rdt_blkh2o(n) > 0)    used = send_data(id_rdt_blkh2o(n),                 &
+                                                 rdt_blkh2o(is:ie,js:je,:,n),       &
+                                                 time, is, js)
+    if (id_rdt_mconv(n) > 0)    used = send_data(id_rdt_mconv(n),                   &
+                                                 rdt_mconv(is:ie,js:je,:,n),        &
+                                                 time, is, js) 
 enddo
 do nt = 1, nice_mass
     ndx=vapor_indx(nt)
@@ -1412,7 +1506,7 @@ do nt = 1, nice_mass
 enddo
 
 if (id_rdt_subl_bin > 0) used = send_data (id_rdt_subl_bin, rdt_subl_bin(:,:,:,nh2o_bin), time, is, js)
-if (id_rdt_blkh2o > 0) used = send_data (id_rdt_blkh2o, rdt_blkh2o(:,:,:,nh2o_blk), time, is, js)
+if (id_rdt_subl_blk > 0) used = send_data (id_rdt_subl_blk, rdt_subl_blk(:,:,:,nh2o_blk), time, is, js)
 
 if (id_rdt_h2o2 > 0) used = send_data (id_rdt_h2o2, rdt_h2o2, Time, is, js)
 
@@ -1427,7 +1521,8 @@ enddo
 if (id_tdt_pbl > 0)     used = send_data (id_tdt_pbl, tdt_pbl, Time, is, js)
 if (id_tdt_adj > 0)     used = send_data (id_tdt_adj, tdt_adj, Time, is, js)
 if (id_tdt_micro > 0)   used = send_data (id_tdt_micro, tdt_micro, Time, is, js)
-if (id_tdt_blkh2o > 0)   used = send_data (id_tdt_blkh2o, tdt_blkh2o, Time, is, js)
+if (id_tdt_blkh2o > 0)  used = send_data (id_tdt_blkh2o, tdt_blkh2o, Time, is, js)
+if (id_tdt_mconv > 0)   used = send_data (id_tdt_mconv, tdt_mconv, Time, is, js)
 if (id_tdt_hrad > 0)    used = send_data (id_tdt_hrad, tdt_rad, Time, is, js)
 if (id_lheat > 0)       used = send_data (id_lheat, tdt_co2, Time, is, js)
 
@@ -1470,6 +1565,9 @@ integer km, fld_dims(4), ntrace, ntp, klevs_pole, klevs_trop
 
 character (len=256)  :: filename, fieldname
 
+type(FmsNetcdfFile_t) :: fileobj
+type(FmsNetcdfDomainFile_t) :: Phys_restart
+
 logical              ::  lga, lgb
 #ifdef fv3_turb
 type(surf_diff_type) :: Surf_diff
@@ -1488,16 +1586,13 @@ je = js + size(lon,2) - 1
 id = size(lonb,1) - 1
 jd = size(lonb,2) - 1
 kd = size(pstd)
-!     ----- read namelist -----
 
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ()
-    ierr = 1; do while (ierr /= 0)
-        read  (unit, nml=mars_physics_nml, iostat=io, end=10)
-        ierr = check_nml_error (io, 'mars_physics_nml')
-    enddo
-10     call close_file (unit)
-endif
+
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=mars_physics_nml, iostat=io)
+ierr = check_nml_error(io,'mars_physics_nml')
 
 !     ----- write version info and namelist to log file -----
 
@@ -1559,10 +1654,13 @@ allocate (id_rdt_micro(ntrace))
 allocate (id_rdt_sedim(ntrace))
 allocate (id_rdt_coag(ntrace))
 allocate (id_rdt_hrad(ntrace))
+allocate (id_rdt_blkh2o(ntrace))
+allocate (id_rdt_mconv(ntrace))
 allocate (id_gascol(ntrace_gas))
 allocate (id_pchem(ntrace_gas))
 allocate (id_rdt_subl(nice_mass))
 !allocate (id_rdt_subl_bin(ntrace))
+allocate (tracers_in_mca(ntrace))
 
 !-------- Common to all tracers
 do nt = 1, ntrace
@@ -1607,6 +1705,16 @@ do nt = 1, ntrace
     id_rdt_hrad(nt) = register_diag_field (mod_name, trim(tname),                           &
                         axes(1:3), Time, 'Tracer Tendency Radiation', 'kg/kg/s',            &
                         missing_value=missing_value)
+
+    tname = trim(tracer_name) // '_Tblk'
+    id_rdt_blkh2o(nt) = register_diag_field (mod_name, trim(tname),                         &
+                        axes(1:3), Time, 'Tracer Tendency Bulk H2O', 'kg/kg/s',             &
+                        missing_value=missing_value)
+    
+    tname = trim(tracer_name) // '_Tmconv'
+    id_rdt_mconv(nt) = register_diag_field (mod_name, trim(tname),                          &
+                        axes(1:3), Time, 'Tracer Tendency Moist Convection', 'kg/kg/s',     &
+                        missing_value=missing_value)
 enddo
 
 
@@ -1621,9 +1729,6 @@ do nt = 1, nice_mass
                         missing_value=missing_value)
 enddo
 
-id_rdt_blkh2o = register_diag_field (mod_name, 'rdt_blkh2o',                                &
-                        axes(1:3), Time, 'Bulk Water Cloud Tendency', 'kg/kg/s',            &
-                        missing_value=missing_value)
 
 !!! TEMPERATURE TENDENCIES
 id_tdt      = register_diag_field (mod_name, 'tdt_ndamp',                                   &
@@ -1650,8 +1755,12 @@ id_tdt_micro = register_diag_field (mod_name, 'tdt_micro',                      
                 axes(1:3), Time, 'Temperature Tendency Moment Microphysics', 'K/s',         &
                 missing_value=missing_value)
 
-id_tdt_blkh2o  = register_diag_field (mod_name, 'tdt_blkh2o',                                   &
+id_tdt_blkh2o = register_diag_field (mod_name, 'tdt_blkh2o',                                &
                 axes(1:3), Time, 'Temperature Tendency Bulk Cloud Scheme', 'K/s',           &
+                missing_value=missing_value)
+
+id_tdt_mconv = register_diag_field (mod_name, 'tdt_mconv',                                  &
+                axes(1:3), Time, 'Temperature Tendency Moist Convection', 'K/s',            &
                 missing_value=missing_value)
 
 id_lheat    = register_diag_field (mod_name, 'tdt_co2',                                     &
@@ -1802,7 +1911,7 @@ endif
 if (nml_switch(GW_drag_TOG,2)) then
     if (mcpu0) print *,  'Calling  cg_drag_init ...'
 
-    call cg_drag_init (phys_domain, lon, lat, pstd, Time=Time, axes=axes)
+    call cg_drag_init (phys_domain, lonb, latb, pstd, Time=Time, axes=axes)
 
     id_udt_cgwd = register_diag_field (mod_name, 'udt_cgwd',                                &
                     axes(1:3), Time, 'U Tendency for c Gravity Wave Drag', 'm/s/s',         &
@@ -1831,15 +1940,18 @@ if (do_vert_diff) then
     allocate (rhouch_save(is:ie,js:je))
     allocate (k_pbl_save(is:ie,js:je))
 
+    diff_m_new(is:ie,js:je,:)=0.d0
+    diff_t_new(is:ie,js:je,:)=0.d0
     rhouch_save = 0.0
     k_pbl_save  = nlevels
 
     ! Get time-smoothed diffusivities from physics restart file
     filename = 'INPUT/physics.res.nc'
-    if (file_exists(trim(filename))) then
+    if( open_file(Phys_restart, trim(filename), 'read', phys_domain, is_restart=.true.) ) then 
         if (mcpu0) print *,'Reading  restart file:   ',  trim(filename)
-        call read_data(trim(filename), 'diffm', diff_m_new)
-        call read_data(trim(filename), 'difft', diff_t_new)
+        call phys_register_restart(Phys_restart)
+        call read_restart(Phys_restart, ignore_checksum=.true.)
+        call close_file(Phys_restart)
     else
         diff_m_new = 1.e-3
         diff_t_new = 1.e-3
@@ -1864,18 +1976,18 @@ end if
 if (do_mars_radiation)  then
     if (mcpu0) print *,'Initializing aerosol and radiation'
     call aerosol_init(nlon, mlat, lonb, latb, lon, lat, axes, Time)
-    call radiation_driver_init(nlon, mlat, nlevels, lonb, latb, lon, lat, axes, Time)
+    call radiation_driver_init(nlon, mlat, id, jd, nlevels, lonb, latb, lon, lat, axes, Time, phys_domain)
 
 else if (do_simple_radiation) then
-    call simple_rad_driver_init(nlon, mlat, nlevels, lonb, latb, lon, lat, axes, Time)
+    call simple_rad_driver_init(nlon, mlat, id, jd, nlevels, lonb, latb, lon, lat, axes, Time)
 
 else if (do_teq_z) then
     allocate (teq(is:ie,js:je,nlevels))
 
     filename = 'INPUT/teq.nc'
-    if (file_exists(trim(filename))) then
+    if( open_file(fileobj, trim(filename), 'read') ) then 
         ! first get z dimension and then allocate  zteq and teqin
-        call field_size(trim(filename), 'teq', fld_dims)
+        call get_variable_size( fileobj, 'teq', fld_dims)
         km = fld_dims(3)
         if (mcpu0) print *, 'Input Teq vertical dimension:  ', km
 
@@ -1892,7 +2004,7 @@ else
     allocate (teq(is:ie,js:je,nlevels))
 
     filename = 'INPUT/teq.nc'
-    if (file_exists(trim(filename))) then
+    if( open_file(fileobj, trim(filename), 'read') ) then 
         call read_teq(filename, lon, lat, pstd, teq(is:ie,js:je,:))
     endif
 
@@ -1901,6 +2013,13 @@ else
 
 endif
 
+if (do_moist_convective_adjust) then
+    tracers_in_mca(:)= .false. !Setting to false for all tracers, no tracer mixing in moist convection
+    call moist_conv_init(axes, Time ,tracers_in_mca)
+    if (mcpu0) print *, 'Returned from AM4 moist conv init: '
+    call sat_vapor_pres_init()
+    if (mcpu0) print *, 'Returned from AM4 sat vapor pres init: '
+endif
 
 if (do_bin_water_cycle) then
     call cloud_physics_init(nlon, mlat, lonb, latb, lon, lat, axes, Time)
@@ -1956,20 +2075,26 @@ end subroutine mars_physics_init
 !#######################################################################
 
 
-subroutine mars_physics_end(days)
+subroutine mars_physics_end( phys_domain, days)
 
 ! write restart files and release memory
 
+type(domain2d),      intent(inout) :: phys_domain
 integer, intent(in) :: days
 character (len=256) :: filename
+type(FmsNetcdfDomainFile_t) :: Phys_restart
 
 mcpu0 = (mpp_pe() == mpp_root_pe())
 
 if (do_vert_diff) then
     filename = 'RESTART/physics.res.nc'
     if (mcpu0) print *,'Writing physics restart file: ',  trim(filename)
-    call write_data(trim(filename), 'diffm', diff_m_new)
-    call write_data(trim(filename), 'difft', diff_t_new)
+    if( open_file(Phys_restart, trim(filename), 'overwrite', phys_domain, is_restart=.true.) ) then 
+        call phys_register_restart(Phys_restart)
+        call write_restart(Phys_restart)
+        call add_domain_dims(Phys_restart)
+        call close_file(Phys_restart)
+    endif
 
     deallocate (diff_m_new)
     deallocate (diff_t_new)
@@ -1982,14 +2107,14 @@ if (do_vert_diff) then
 
 endif
 
-if (do_mars_surface)     call mars_surface_end(days)
+if (do_mars_surface)     call mars_surface_end( phys_domain, days)
 
-if (do_dust_source_sink) call dust_source_end(days)
-if (do_moment_dust)     call dust_update_end
+if (do_dust_source_sink) call dust_source_end( phys_domain, days)
+if (do_moment_dust)     call dust_update_end( phys_domain)
 
 if (do_bin_water_cycle)  call cloud_physics_end
 
-if (do_mars_radiation)   call radiation_driver_end
+if (do_mars_radiation)   call radiation_driver_end( phys_domain )
 
 if (do_simple_radiation) call simple_rad_driver_end
 
@@ -2006,15 +2131,15 @@ end subroutine mars_physics_end
 !#######################################################################
 
 
-subroutine newtonian_damping (lat, ps, p_full, t, teqin, tdt,  mask)
+subroutine newtonian_damping (id, jd, kd, lat, ps, p_full, t, teqin, tdt,  mask)
 
 !   routine to compute thermal forcing for held & suarez (1994)
 !   benchmark calculation.
-
-real, intent(in), dimension(:,:)             :: lat, ps
-real, intent(in), dimension(:,:,:)           :: p_full, t, teqin
-real, intent(out), dimension(:,:,:)          :: tdt
-real, intent(in), dimension(:,:,:), optional :: mask
+integer, intent(in) :: id, jd, kd
+real, intent(in), dimension(id, jd)             :: lat, ps
+real, intent(in), dimension(id, jd, kd)           :: p_full, t, teqin
+real, intent(out), dimension(id, jd, kd)          :: tdt
+real, intent(in), dimension(id, jd, kd), optional :: mask
 
 !-----------------------------------------------------------------------
 real, dimension(size(t,1),size(t,2),size(t,3)) :: tdamp
@@ -2044,18 +2169,18 @@ end subroutine newtonian_damping
 !#######################################################################
 
 
-subroutine newtonian_damping_z (lat, z_full, t, zteq, teqin, teqout, tdt,  mask)
+subroutine newtonian_damping_z (id, jd, kd, lat, z_full, t, zteq, teqin, teqout, tdt,  mask)
 
 !   routine to compute thermal forcing from a Teq field specified as a function of Z
 !
 !               Need to re-interpolate in height as the Z field evolves
 
-use axis_utils_mod, only: interp_1d
-
-real, intent(in), dimension(:,:)             :: lat
-real, intent(in), dimension(:,:,:)           :: z_full, t, zteq, teqin
-real, intent(out), dimension(:,:,:)          :: teqout, tdt
-real, intent(in), dimension(:,:,:), optional :: mask
+use axis_utils2_mod, only: interp_1d
+integer, intent(in) :: id, jd, kd
+real, intent(in), dimension(id,jd)             :: lat
+real, intent(in), dimension(id,jd,kd)           :: z_full, t, zteq, teqin
+real, intent(out), dimension(id,jd,kd)          :: teqout, tdt
+real, intent(in), dimension(id,jd,kd), optional :: mask
 
 real, dimension(size(t,1),size(t,2),size(t,3)) :: tdamp, zflip
 
@@ -2169,24 +2294,25 @@ end subroutine newtonian_damping_anal
 !#######################################################################
 
 
-subroutine rayleigh_damping (ps, p_full, lat, u, v, udt, vdt, mask)
+subroutine rayleigh_damping (id, jd, kd, ps, p_full, lat, u, v, udt, vdt, mask)
 
 !          rayleigh damping of wind components near surface
 !               sigma_b < sigma < 1.0
 !
 !          Optional additional damping for p < sponge_bottom for the upper layers
 
-real, intent(in), dimension(:,:)             :: ps
-real, intent(in), dimension(:,:)             :: lat
-real, intent(in), dimension(:,:,:)           :: p_full, u, v
-real, intent(out), dimension(:,:,:)          :: udt, vdt
-real, intent(in), dimension(:,:,:), optional :: mask
+integer, intent(in) :: id, jd, kd
+real, intent(in), dimension(id,jd)             :: ps
+real, intent(in), dimension(id,jd)             :: lat
+real, intent(in), dimension(id,jd,kd)           :: p_full, u, v
+real, intent(out), dimension(id,jd,kd)          :: udt, vdt
+real, intent(in), dimension(id,jd,kd), optional :: mask
 
 ! local vars
 real, dimension(size(u,1),size(u,2)) :: sigma, vfactr, rps
 real, dimension(size(u,1),size(u,2)) :: ystruc, umx, vmx
 
-integer :: i, j, k, id, jd
+integer :: i, j, k
 real    :: vcoeff, sponge_coeff
 
 !----------------compute damping----------------------------------------
@@ -2302,7 +2428,7 @@ end subroutine tracer_source_sink
 !#######################################################################
 
 
-subroutine diffuse (is, js, dt, Time, lon, lat,                             &
+subroutine diffuse (is, js, id, jd, kd, ntp, dt, Time, lon, lat,                             &
                      p_half, p_full, z_half, z_full, tsurf,                 &
                      u, v, t, r, um, vm, tm, rm, udt, vdt, tdt, rdt,        &
                      dnflux, mask, kbot)
@@ -2310,22 +2436,22 @@ subroutine diffuse (is, js, dt, Time, lon, lat,                             &
 !   calculate the vertical diffusion and turbulence when no forcing or
 !   no surface
 
-integer, intent(in)                             :: is, js
+integer, intent(in)                             :: is, js, id, jd, kd, ntp
 real, intent(in)                                :: dt
 type(time_type), intent(in)                     :: Time
-real, intent(in), dimension(:,:)                :: lon
-real, intent(in), dimension(:,:)                :: lat
-real, intent(in), dimension(:,:,:)              :: p_half, p_full
-real, intent(in), dimension(:,:,:)              :: z_half, z_full
-real, intent(in), dimension(:,:)                :: tsurf
-real, intent(in), dimension(:,:,:)              :: u, v, t, um, vm, tm
-real, intent(in), dimension(:,:,:,:)            :: r, rm
-real, intent(inout), dimension(:,:,:)           :: udt, vdt, tdt
-real, intent(inout), dimension(:,:,:,:)         :: rdt
-real, intent(in), dimension(:,:)                :: dnflux
+real, intent(in), dimension(id,jd)                :: lon
+real, intent(in), dimension(id,jd)                :: lat
+real, intent(in), dimension(id,jd,kd+1)              :: p_half, z_half
+real, intent(in), dimension(id,jd,kd)              :: p_full, z_full
+real, intent(in), dimension(id,jd)                :: tsurf
+real, intent(in), dimension(id,jd,kd)              :: u, v, t, um, vm, tm
+real, intent(in), dimension(id,jd,kd,ntp)            :: r, rm
+real, intent(inout), dimension(id,jd,kd)           :: udt, vdt, tdt
+real, intent(inout), dimension(id,jd,kd,ntp)         :: rdt
+real, intent(in), dimension(id,jd)                :: dnflux
 
-real, intent(in), dimension(:,:,:), optional    :: mask
-integer, intent(in), dimension(:,:) , optional  :: kbot
+real, intent(in), dimension(id,jd,kd), optional    :: mask
+integer, intent(in), dimension(id,jd) , optional  :: kbot
 
 !  Local
 real, dimension(size(t,1),size(t,2))            :: ps
@@ -2333,7 +2459,7 @@ real, dimension(size(t,1),size(t,2),size(t,3))  :: diff_m, diff_t
 real, dimension(size(t,1),size(t,2),size(t,3))  :: ttnd
 
 integer                                         ::   days, seconds
-integer                                         :: i, j, k, kb, n, id, jd, kd, ie, je, ntp
+integer                                         :: i, j, k, kb, n, ie, je
 logical                                         :: used
 real                                            :: flux, sink, value, alpha
 #ifdef fv3_turb
@@ -2354,10 +2480,6 @@ real, dimension(size(t,1),size(t,2),size(t,3))  :: tdtlw
 logical, dimension(size(t,1),size(t,2))         :: convect
 type(time_type)                                 :: Time_next
 
-id  = size(lat,1)
-jd  = size(lat,2)
-kd  = size(p_full,3)
-ntp = size(r,4)
 
 ie  = is + size(lat,1) - 1
 je  = js + size(lat,2) - 1
@@ -2460,7 +2582,7 @@ real, intent(out), dimension(:,:,:)     :: tout
 
 !-----------------------------------------------------------------------
 integer                                 :: unit, io, ierr, i, j, k, nlevels, klev, kk
-integer                                 :: im, jm, km, fld_dims(4)
+integer                                 :: im, jm, km, fld_dims(1), fld_dims4d(4)
 real                                    :: frac
 
 real, dimension(:,:,:), allocatable     :: teq_inpt
@@ -2470,41 +2592,44 @@ real, dimension(:), allocatable         :: lat_inpt, pres_inpt,  presh_inpt
 real, dimension(:), allocatable         :: lonb_inpt, latb_inpt
 
 real, dimension(size(phalf)-1)          ::  pstd
+type(FmsNetcdfFile_t) :: fileobj
 
 !-----------------------------------------------------------------------
 nlevels = size(phalf) - 1
 
-call field_size(trim(filename), 'lat', fld_dims)
+if( open_file(fileobj, trim(filename), 'read') ) then 
+    call get_variable_size( fileobj, 'lat', fld_dims)
 
-allocate(lat_inpt (fld_dims(1)))
-allocate(latb_inpt(fld_dims(1)+1))
+    allocate(lat_inpt (fld_dims(1)))
+    allocate(latb_inpt(fld_dims(1)+1))
 
-call read_data(trim(filename), 'lat',  lat_inpt,  no_domain=.true.)
-call read_data(trim(filename), 'latb', latb_inpt, no_domain=.true.)
+    call read_data(fileobj, 'lat',  lat_inpt)
+    call read_data(fileobj, 'latb', latb_inpt)
 
-call field_size(trim(filename), 'lonb', fld_dims)
+    call get_variable_size( fileobj, 'lonb', fld_dims)
 
-allocate(lonb_inpt (fld_dims(1)))
+    allocate(lonb_inpt (fld_dims(1)))
 
-call read_data(trim(filename), 'lonb', lonb_inpt, no_domain=.true.)
+    call read_data(fileobj, 'lonb', lonb_inpt)
 
-call field_size(trim(filename), 'pfull', fld_dims)
-allocate(pres_inpt(fld_dims(1)))
-call read_data(trim(filename), 'pfull', pres_inpt, no_domain=.true.)
-print *, 'pfull dims:  ', fld_dims
-pres_inpt = 100.0 * pres_inpt
-!-----------------------------------------------------------------------
+    call get_variable_size( fileobj, 'pfull', fld_dims)
+    allocate(pres_inpt(fld_dims(1)))
+    call read_data(fileobj, 'pfull', pres_inpt)
+    print *, 'pfull dims:  ', fld_dims
+    pres_inpt = 100.0 * pres_inpt
+    !-----------------------------------------------------------------------
 
-call field_size(trim(filename), 'teq', fld_dims)
+    call get_variable_size( fileobj, 'teq', fld_dims4d)
 
-im = fld_dims(1); jm = fld_dims(2); km = fld_dims(3)
-print *, 'Input Teq dims:  ', fld_dims
+    im = fld_dims4d(1); jm = fld_dims4d(2); km = fld_dims4d(3)
+    print *, 'Input Teq dims:  ', fld_dims4d
 
-allocate(teq_inpt(im,jm,km))
-allocate(txy(im,jm))
+    allocate(teq_inpt(im,jm,km))
+    allocate(txy(im,jm))
 
-call read_data(trim(filename), 'teq', teq_inpt, no_domain=.true.)
-
+    call read_data(fileobj, 'teq', teq_inpt)
+    call close_file(fileobj)
+endif
 latb_inpt(:) = latb_inpt(:) / RADIAN
 lonb_inpt(:) = lonb_inpt(:) / RADIAN
 !-----------------------------------------------------------------------
@@ -2582,40 +2707,43 @@ real, intent(in), dimension(:,:)        :: lon, lat
 real, intent(out), dimension(:,:,:)     ::  zgrd, tout
 
 !-----------------------------------------------------------------------
-integer                                 :: k, im, jm, km, fld_dims(4)
+integer                                 :: k, im, jm, km, fld_dims(1), fld_dims4d(4)
 
 real, dimension(:,:,:), allocatable     :: teq_inpt, zzf_inpt
 
 real, dimension(:), allocatable         :: lat_inpt, pres_inpt, presh_inpt
 real, dimension(:), allocatable         :: lonb_inpt, latb_inpt
+type(FmsNetcdfFile_t) :: fileobj
 
-call field_size(trim(filename), 'lat', fld_dims)
+if( open_file(fileobj, trim(filename), 'read') ) then 
+    call get_variable_size( fileobj, 'lat', fld_dims)
 
-allocate(lat_inpt (fld_dims(1)))
-allocate(latb_inpt(fld_dims(1)+1))
+    allocate(lat_inpt (fld_dims(1)))
+    allocate(latb_inpt(fld_dims(1)+1))
 
-call read_data(trim(filename), 'lat',  lat_inpt,  no_domain=.true.)
-call read_data(trim(filename), 'latb', latb_inpt, no_domain=.true.)
+    call read_data(fileobj, 'lat',  lat_inpt)
+    call read_data(fileobj, 'latb', latb_inpt)
 
-call field_size(trim(filename), 'lonb', fld_dims)
+    call get_variable_size( fileobj, 'lonb', fld_dims)
 
-allocate(lonb_inpt (fld_dims(1)))
+    allocate(lonb_inpt (fld_dims(1)))
 
-call read_data(trim(filename), 'lonb', lonb_inpt, no_domain=.true.)
+    call read_data(fileobj, 'lonb', lonb_inpt)
 
-latb_inpt(:) = latb_inpt(:) / RADIAN
-lonb_inpt(:) = lonb_inpt(:) / RADIAN
+    latb_inpt(:) = latb_inpt(:) / RADIAN
+    lonb_inpt(:) = lonb_inpt(:) / RADIAN
 
-call field_size(trim(filename), 'teq', fld_dims)
+    call get_variable_size( fileobj, 'teq', fld_dims4d)
 
-im = fld_dims(1); jm = fld_dims(2); km = fld_dims(3)
+    im = fld_dims4d(1); jm = fld_dims4d(2); km = fld_dims4d(3)
 
-allocate(teq_inpt(im,jm,km))
-call read_data(trim(filename), 'teq', teq_inpt, no_domain=.true.)
+    allocate(teq_inpt(im,jm,km))
+    call read_data(fileobj, 'teq', teq_inpt)
 
-allocate(zzf_inpt(im,jm,km))
-call read_data(trim(filename), 'zzf', zzf_inpt, no_domain=.true.)
-
+    allocate(zzf_inpt(im,jm,km))
+    call read_data(fileobj, 'zzf', zzf_inpt)
+    call close_file(fileobj)
+endif
 ! Need to flip indices so that zgrd is monotonically increasing
 do k = 1, km
     call horiz_interp(teq_inpt(:,:,k), lonb_inpt, latb_inpt, lon, lat,          &
@@ -2687,7 +2815,7 @@ end function nml_switch
 !#######################################################################
 
 
-subroutine update_water(is, ie, js, je, nz, lat, lon, dt, pl, tg, drg, kpbl, r,     &
+subroutine update_water(is, ie, js, je, nz, ntrace, lat, lon, dt, pl, tg, drg, kpbl, r,     &
                         rdt, nh2o, qpig, wflux, rdt_subl, sols)
 
 ! update the water vapor field for the moment microphysics scheme
@@ -2697,19 +2825,19 @@ use constants_mod, only: grav
 implicit none
 
 real, intent(in)                        :: dt                                           ! physical time step [s]
-integer, intent(in)                     :: nz,is,js,ie,je
-real, intent(in), dimension(:,:)        :: lat                                          ! latitude [rad]
-real, intent(in), dimension(:,:)        :: lon                                          ! longitude [rad]
-real, intent(in), dimension(:,:,:)      :: pl                                           ! pressure at each half level [mbar]
-real, intent(in), dimension(:,:)        :: drg                                          ! drag
-integer, intent(in), dimension(:,:)     :: kpbl                                         ! level of pbl top
+integer, intent(in)                     :: nz,is,js,ie,je,ntrace
+real, intent(in), dimension(is:ie,js:je)        :: lat                                          ! latitude [rad]
+real, intent(in), dimension(is:ie,js:je)        :: lon                                          ! longitude [rad]
+real, intent(in), dimension(is:ie,js:je,nz+1)      :: pl                                           ! pressure at each half level [mbar]
+real, intent(in), dimension(is:ie,js:je)        :: drg                                          ! drag
+integer, intent(in), dimension(is:ie,js:je)     :: kpbl                                         ! level of pbl top
 integer, intent(in)                     :: nh2o                                         ! index for water vapor
-real, intent(in), dimension(:,:)        :: tg                                           ! ground temperature (equivalent to GT) [K]
+real, intent(in), dimension(is:ie,js:je)        :: tg                                           ! ground temperature (equivalent to GT) [K]
 real, intent(in)                        :: sols
 
-real*8, intent(in),dimension(:,:,:,:)   :: r                                            ! tracer [kg/kg]
-real*8, intent(in),dimension(:,:,:,:)   :: rdt                                          ! tracer tend [kg/kg/s]
-real*8, intent(inout),dimension(:,:,:)  :: qpig                                         ! tracer on surface [kg/m2]
+real*8, intent(in),dimension(is:ie,js:je,nz,ntrace)   :: r                                            ! tracer [kg/kg]
+real*8, intent(in),dimension(is:ie,js:je,nz,ntrace)   :: rdt                                          ! tracer tend [kg/kg/s]
+real*8, intent(inout),dimension(is:ie,js:je,nice_mass)  :: qpig                                         ! tracer on surface [kg/m2]
 real*8, intent(out), dimension(size(pl,1),size(pl,2))                   :: wflux        ! sublimation flux [kg/m2/s]
 real*8, intent(out), dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rdt_subl     ! tendency [kg/kg/s]
 
@@ -2821,7 +2949,7 @@ end subroutine update_water
 !#######################################################################
 
 
-subroutine update_water_fv3(is, ie, js, je, nz, lat, lon, dt, pl, tg, drg, kpbl,    &
+subroutine update_water_fv3(is, ie, js, je, nz, ntrace, lat, lon, dt, pl, tg, drg, kpbl,    &
                             r, rdt, nh2o, qpig, wflux, rdt_subl)
 
 ! update the water vapor field for the bin microphysics scheme
@@ -2833,19 +2961,18 @@ implicit none
 !  Arguments
 !  ---------
 real, intent(in)                            :: dt                                   ! physical time step [s]
-integer, intent(in)                         :: nz,is,js,ie,je
-real, intent(in), dimension(:,:)            :: lat                                  ! latitude [rad]
-real, intent(in), dimension(:,:)            :: lon                                  ! longitude [rad]
-real, intent(in), dimension(:,:,:)          :: pl                                   ! pressure at each half level [mbar]
-real, intent(in), dimension(:,:)            :: drg                                  ! drag
-integer, intent(in), dimension(:,:)         :: kpbl                                 ! level of pbl top
-integer, intent(in)                         :: nh2o                                 ! index for water vapor
-real, intent(in), dimension(:,:)            :: tg                                   ! ground temperature (equivalent to GT) [K]
+integer, intent(in)                         :: nz,is,js,ie,je,ntrace
+real, intent(in), dimension(is:ie,js:je)        :: lat                                          ! latitude [rad]
+real, intent(in), dimension(is:ie,js:je)        :: lon                                          ! longitude [rad]
+real, intent(in), dimension(is:ie,js:je,nz+1)      :: pl                                           ! pressure at each half level [mbar]
+real, intent(in), dimension(is:ie,js:je)        :: drg                                          ! drag
+integer, intent(in), dimension(is:ie,js:je)     :: kpbl                                         ! level of pbl top
+integer, intent(in)                     :: nh2o                                         ! index for water vapor
+real, intent(in), dimension(is:ie,js:je)        :: tg                                           ! ground temperature (equivalent to GT) [K]
 
-!    Tracers :
-real, intent(in),dimension(:,:,:,:)         :: r                                    ! tracer [kg/kg] bottom level
-real, intent(in),dimension(:,:,:,:)         :: rdt                                  ! tracer tend [kg/kg/s] bottom level
-real, intent(inout),dimension(:,:)          :: qpig                                 ! tracer on surface [kg/m2]
+real*8, intent(in),dimension(is:ie,js:je,nz,ntrace)   :: r                                            ! tracer [kg/kg]
+real*8, intent(in),dimension(is:ie,js:je,nz,ntrace)   :: rdt                                          ! tracer tend [kg/kg/s]
+real*8, intent(inout),dimension(is:ie,js:je)  :: qpig                                         ! tracer on surface [kg/m2]
 real, intent(out), dimension(size(pl,1),size(pl,2))                   :: wflux      ! sublimation flux [kg/m2/s]
 real, intent(out), dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rdt_subl   ! tendency [kg/kg/s]
 
@@ -2936,10 +3063,10 @@ end subroutine update_water_fv3
 !#######################################################################
 
 
-subroutine update_water_blk(is, ie, js, je, nz, lat, lon, dt, pl, tg, drg, kpbl,    &
-                            r, rdt, nh2o, qpig, wflux, rdt_subl)!, latht, dlatht)
+subroutine update_water_blk(is, ie, js, je, nz, ntrace, lat, lon, dt, pl, tg, drg, kpbl,    &
+                            r, rdt, nh2o, qpig, wflux, rdt_subl, latht, dlatht)
 
-! update the water vapor field for the bin microphysics scheme
+! update the water vapor field for the bulk microphysics scheme
 
 use constants_mod, only: grav
 
@@ -2948,25 +3075,22 @@ implicit none
 !  Arguments
 !  ---------
 real, intent(in)                            :: dt                                   ! physical time step [s]
-integer, intent(in)                         :: nz,is,js,ie,je
-real, intent(in), dimension(:,:)            :: lat                                  ! latitude [rad]
-real, intent(in), dimension(:,:)            :: lon                                  ! longitude [rad]
-real, intent(in), dimension(:,:,:)          :: pl                                   ! pressure at each half level [mbar]
-real, intent(in), dimension(:,:)            :: drg                                  ! drag
-!real, intent(inout), dimension(:,:)            :: drg                                  ! drag
-integer, intent(in), dimension(:,:)         :: kpbl                                 ! level of pbl top
-integer, intent(in)                         :: nh2o                                 ! index for water vapor
-real, intent(in), dimension(:,:)            :: tg                                   ! ground temperature (equivalent to GT) [K]
-!real, intent(inout), dimension(:,:)            :: tg                                   ! ground temperature (equivalent to GT) [K]
+integer, intent(in)                         :: nz,is,js,ie,je,ntrace
+real, intent(in), dimension(is:ie,js:je)        :: lat                              ! latitude [rad]
+real, intent(in), dimension(is:ie,js:je)        :: lon                              ! longitude [rad]
+real, intent(in), dimension(is:ie,js:je,nz+1)     :: pl                               ! pressure at each half level [mbar]
+real, intent(in), dimension(is:ie,js:je)        :: drg                              ! drag
+integer, intent(in), dimension(is:ie,js:je)     :: kpbl                             ! level of pbl top
+integer, intent(in)                             :: nh2o                             ! index for water vapor
+real, intent(in), dimension(is:ie,js:je)        :: tg                               ! ground temperature (equivalent to GT) [K]
 
-!    Tracers :
-real, intent(in),dimension(:,:,:,:)         :: r                                    ! tracer [kg/kg] bottom level
-real, intent(in),dimension(:,:,:,:)         :: rdt                                  ! tracer tend [kg/kg/s] bottom level
-real, intent(inout),dimension(:,:)          :: qpig                                 ! tracer on surface [kg/m2]
+real*8, intent(in),dimension(is:ie,js:je,nz,ntrace)   :: r                          ! tracer [kg/kg]
+real*8, intent(in),dimension(is:ie,js:je,nz,ntrace)   :: rdt                        ! tracer tend [kg/kg/s]
+real*8, intent(inout),dimension(is:ie,js:je)          :: qpig                       ! tracer on surface [kg/m2]
 real, intent(out), dimension(size(pl,1),size(pl,2))                   :: wflux      ! sublimation flux [kg/m2/s]
 real, intent(out), dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rdt_subl   ! tendency [kg/kg/s]
-!real, intent(inout),dimension(:,:)          :: latht                                ! latent heat flux term for progts [W/m2]
-!real, intent(inout),dimension(:,:)          :: dlatht                               ! derivative of latent heat flux term for progts [W/m2]
+real, intent(inout),dimension(is:ie,js:je)            :: latht                      ! latent heat flux term for progts [W/m2]
+real, intent(inout),dimension(is:ie,js:je)            :: dlatht                     ! derivative of latent heat flux term for progts [W/m2]
 
 !  Local variables
 !  ---------------
@@ -2977,7 +3101,7 @@ real, dimension(size(pl,1),size(pl,2))                                :: qpig_in
 real, dimension(size(pl,1),size(pl,2))                                :: qpig2
 logical                                     :: mcpu0
 integer                                     :: i, j, k, ndx, nt
-real*8                                      :: fw
+real*8                                      :: fw, tg1
 
 !  Treatment
 !  ---------
@@ -2986,15 +3110,8 @@ mcpu0 = (mpp_pe() == mpp_root_pe())
 !**********************************************************
 !   sublimation/direct deposition of water from surface
 !**********************************************************
-! TB18q : no mixing in the atm ?
 !  Note:  wflux > 0 is sublimation
 !         wflux < 0 is condensation
-
-
-!These are 0. for now
-!latht = 0.
-!dlatht = 0.
-
 
 masspbl(:,:) = 0.0
 if (inj_vap_pbl) then
@@ -3016,8 +3133,6 @@ endif
 
 rini(:,:,:,:)       = r(:,:,:,:) + rdt(:,:,:,:) * dt
 
-!! test 5/23/24
-!rini(:,:,:,nh2o) = 1.e-9
 
 qpi(:,:,:)          = rini(:,:,:,nh2o)
 rdt_subl(:,:,:,:)   = 0.
@@ -3031,8 +3146,13 @@ do i = is, ie
     do j = js, je
 
         if (qpig(i,j) .ge. 0.) then
-
-            qgnd(i,j)  = (18.0 / 44.0) * 611.0 * exp(22.5 * (1.0 - (273.16 / tg(i,j)))) / pl(i,j,nz+1)
+            !If surface temperature is above freezing, use Buck 1981 vapor pressure over liquid
+            if (liquid_vap_pres .and. tg(i,j) .ge. 273.16 ) then
+                tg1=tg(i,j)-273.16
+                qgnd(i,j)= (fw*18.0 / (44.0*pl(i,j,nz+1))) * (611.21*exp(17.502*tg1/(240.97+tg1)))
+            else
+               qgnd(i,j)  = (18.0 / 44.0) * 611.0 * exp(22.5 * (1.0 - (273.16 / tg(i,j)))) / pl(i,j,nz+1)
+            endif 
             wflux(i,j) = facsubl * drg(i,j) * (qgnd(i,j) - qpi(i,j,nz))
 
             ! Sublimation : check we do not sublime the entire reservoir of ice
@@ -3057,6 +3177,14 @@ do i = is, ie
                 endif
             endif
 
+            if (blk_latent_heat .and. wflux(i,j) .ne. 0.) then
+                !calculate latent heat for the amount of water vapor evaporated (rini - qpi) 
+                latht(i,j) = drg(i,j) * (2.8e6) * (rini(i,j,nz,nh2o)-qpi(i,j,nz))
+                dlatht(i,j) = -6146.1 * drg(i,j) * (2.8e6) * qgnd(i,j)/(tg(i,j)**2.)
+            else
+                latht(i,j) = 0.d0
+                dlatht(i,j) = 0.d0
+            endif
         endif
     enddo
 enddo
@@ -3075,30 +3203,30 @@ end subroutine update_water_blk
 !#######################################################################
 
 
-subroutine h2o2cond(is,js,nz,lat,lon,dt,phalf,pfull,temp,nh2o2,cond_mass,r,rdt,rdt_h2o2)
+subroutine h2o2cond(is,js,ie,je,nz,ntrace,lat,lon,dt,phalf,pfull,temp,nh2o2,cond_mass,r,rdt,rdt_h2o2)
 
 use constants_mod, only: GRAV
 use mars_surface_mod, only: sfc_h2o2_chem
 
 implicit none
 
-integer, intent(in)                     :: is,js,nz
+integer, intent(in)                     :: is,js,nz,ntrace,ie,je
 integer, intent(in)                     :: nh2o2        ! index for h2o2
 real, intent(in)                        :: dt           ! physical time step (s)
-real, intent(in),    dimension(:,:)     :: lat
-real, intent(in),    dimension(:,:)     :: lon
-real, intent(in),    dimension(:,:,:)   :: phalf        ! pressure[Pa]
-real, intent(in),    dimension(:,:,:)   :: pfull        ! pressure[Pa]
-real, intent(in),    dimension(:,:,:)   :: temp         ! temp [K]
-real, intent(in),    dimension(:,:,:,:) :: r            ! [mmr]
-real, intent(in),    dimension(:,:,:,:) :: rdt          ! tendancy updated [kg/kg/s]
-real, intent(out),   dimension(:,:,:)   :: rdt_h2o2     ! H2O2 tendancy updated [kg/kg/s]
-real, intent(out),   dimension(:,:,:)   :: cond_mass    ! condensing mass (kg m-2)
+real, intent(in),    dimension(is:ie,js:je)     :: lat
+real, intent(in),    dimension(is:ie,js:je)     :: lon
+real, intent(in),    dimension(is:ie,js:je,nz+1)   :: phalf        ! pressure[Pa]
+real, intent(in),    dimension(is:ie,js:je,nz)   :: pfull        ! pressure[Pa]
+real, intent(in),    dimension(is:ie,js:je,nz)   :: temp         ! temp [K]
+real, intent(in),    dimension(is:ie,js:je,nz,ntrace) :: r            ! [mmr]
+real, intent(in),    dimension(is:ie,js:je,nz,ntrace) :: rdt          ! tendancy updated [kg/kg/s]
+real, intent(out),   dimension(is:ie,js:je,nz)   :: rdt_h2o2     ! H2O2 tendancy updated [kg/kg/s]
+real, intent(out),   dimension(is:ie,js:je,nz)   :: cond_mass    ! condensing mass (kg m-2)
 !real, intent(inout), dimension(:,:)     :: sfc_h2o2     ! H2O2 only tracer on surface (kg/m2)
 
 ! Local variables
 logical                                 :: mcpu0 !debug only, identify master processor
-integer                                 :: L,j,i,k,kd,iter,id,jd,ie,je
+integer                                 :: L,j,i,k,kd,iter,id,jd
 real, dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rini            ! tendency kg/kg
 real, dimension(size(temp,1),size(temp,2),size(temp,3))  :: q_h2o2          ! H2O2 mass mixing ratio [kg/kg]
 real, dimension(size(temp,1),size(temp,2))               :: sfc_h2o2_ini    ! H2O2 only tracer on surface (kg/m2)
@@ -3110,8 +3238,6 @@ real, dimension(size(temp,1),size(temp,2),size(temp,3))  :: qcond_h2o2      ! mm
 !---------------
 
 id = size(temp,1); jd = size(temp,2)
-ie = is + id - 1
-je = js + jd - 1
 
 !======================================================================!
 ! Purpose:
@@ -3168,8 +3294,59 @@ END WHERE
 rdt_h2o2(:,:,:) = (q_h2o2(:,:,:) - rini(:,:,:,nh2o2)) / dt
 
 return
-end
+end subroutine h2o2cond
 
+
+!--------------------------------------------------------
+!--------------------------------------------------------
+
+subroutine phys_register_restart(Phys_restart)
+! register restart field to be written to restart file.
+type(FmsNetcdfDomainFile_t),   intent(inout) :: Phys_restart
+character(len=8), dimension(4)               ::  dim_names  !< String array of dimension names
+
+
+
+dim_names(1) = "xaxis_1"
+dim_names(2) = "yaxis_1"
+dim_names(3) = "zaxis_1"
+dim_names(4) = "Time"
+
+call register_axis(Phys_restart, dim_names(1), "x")
+call register_axis(Phys_restart, dim_names(2), "y")
+call register_axis(Phys_restart, dim_names(3), size(diff_m_new,dim=3))
+if (.not. Phys_restart%mode_is_append) call register_axis(Phys_restart, dim_names(4), unlimited)
+
+!< Register the domain decomposed dimensions as variables so that the combiner can work
+!! correctly
+call register_field(Phys_restart, dim_names(1), "double", (/dim_names(1)/))
+call register_field(Phys_restart, dim_names(2), "double", (/dim_names(2)/))
+call register_field(Phys_restart, dim_names(3), "double", (/dim_names(3)/))
+
+call register_restart_field(Phys_restart, 'diffm',diff_m_new, dim_names, is_optional=.true.)
+call register_restart_field(Phys_restart, 'difft',diff_t_new, dim_names, is_optional=.true.)
+
+
+end subroutine phys_register_restart
+
+!--------------------------------------------------------
+!--------------------------------------------------------
+
+!< Add_dimension_data: Adds dummy data for the domain decomposed axis
+subroutine add_domain_dims(Phys_restart)
+type(FmsNetcdfDomainFile_t) :: Phys_restart !< Fms2io domain decomposed fileobj
+integer, dimension(:), allocatable :: buffer !< Buffer with axis data
+integer :: is, ie !< Starting and Ending indices for data
+
+call get_global_io_domain_indices(Phys_restart, "xaxis_1", is, ie, indices=buffer)
+call write_data(Phys_restart, "xaxis_1", buffer)
+deallocate(buffer)
+
+call get_global_io_domain_indices(Phys_restart, "yaxis_1", is, ie, indices=buffer)
+call write_data(Phys_restart, "yaxis_1", buffer)
+deallocate(buffer)
+
+end subroutine add_domain_dims
 
 !#######################################################################
 !#######################################################################

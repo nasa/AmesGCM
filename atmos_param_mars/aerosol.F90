@@ -6,13 +6,20 @@ module aerosol_mod
 
 use constants_mod,      only: KAPPA, CP_AIR, RDGAS, GRAV, PI, RADIAN, RAD_TO_DEG
 
-use fms_mod,            only: error_mesg, FATAL,                      &
-                           open_namelist_file, check_nml_error,                &
-                           mpp_pe, mpp_root_pe, close_file,                    &
-                           write_version_number, stdlog,                       &
-                           uppercase, read_data, write_data, field_size
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
 
-use fms2_io_mod,            only:  file_exists
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
+use   mpp_domains_mod, only: domain2d
+use mpp_mod, only: input_nml_file
 use time_manager_mod,   only: time_type, get_time
 use diag_manager_mod,   only: register_diag_field, send_data,  diag_axis_init
 
@@ -184,17 +191,12 @@ character(len=128) :: scheme, params
 real    ::   value
 real    ::   values(3)
 
-!     ----- read namelist /aerosol_nml/-----
 
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1; do while (ierr /= 0)
-        read  (unit, nml=aerosol_nml, iostat=io, end=10)
-        ierr = check_nml_error (io, 'aerosol_nml')
-    enddo
-10  call close_file (unit)
-endif
-
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=aerosol_nml, iostat=io)
+ierr = check_nml_error(io,'aerosol_nml')
 mcpu0 = (mpp_pe() == mpp_root_pe())
 
 call write_version_number (version,tagname)
@@ -328,7 +330,7 @@ integer :: unit, io, ierr
 integer :: ie, je, id, jd, k, iaa, is, js
 
 character (len=128) :: filename, fieldname
-
+type(FmsNetcdfFile_t) :: fileobj
 type(horiz_interp_type)  ::  Interp
 
 real,  dimension(:),     allocatable  :: areoz_inpt
@@ -341,7 +343,7 @@ real, dimension(:),  allocatable  ::   lonb_inpt, latb_inpt
 
 real, dimension(2)   ::   lonbz  =  (/ 0.0, 6.2832 /)
 
-integer   ::   id_inpt, jd_inpt, areo_length, fld_dims(4)
+integer   ::   id_inpt, jd_inpt, areo_length, fld_dims(1)
 
 
 !
@@ -358,15 +360,12 @@ mcpu0 = (mpp_pe() == mpp_root_pe())
 
 if( mcpu0 )  print *, 'Aerosol dimensions  :',  id, jd
 
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1
-    do while (ierr /= 0)
-        read  (unit, nml=aerosol_optics_nml, iostat=io, end=10)
-        ierr = check_nml_error (io, 'aerosol_optics_nml')
-    enddo
-10    call close_file (unit)
-endif
+
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=aerosol_optics_nml, iostat=io)
+ierr = check_nml_error(io,'aerosol_optics_nml')
 
 
 if( do_inpt_dust_cycle_ktop .AND. dust_cycle_scheme < 1 )  &
@@ -387,19 +386,19 @@ if( do_inpt_dust_cycle  ) then
     if(mcpu0)  print *,  'Reading input dust cycle data from aerosol_init  '
 
     filename= 'INPUT/dust_cycle.nc'
-    if( file_exists( trim( filename ) ) ) then
+    if( open_file(fileobj, trim(filename), 'read')) then
 
-        call field_size( trim(filename), 'areo', fld_dims )
+        call get_variable_size( fileobj, 'areo', fld_dims )
         areo_length= fld_dims(1)
-        call field_size( trim(filename), 'lon', fld_dims )
+        call get_variable_size( fileobj, 'lon', fld_dims )
         id_inpt= fld_dims(1)
-        call field_size( trim(filename), 'lat', fld_dims )
+        call get_variable_size( fileobj, 'lat', fld_dims )
         jd_inpt= fld_dims(1)
 
         if(mcpu0)  print *,  'Reading input dust cycle data from aerosol_init:   ', jd_inpt, id_inpt
 
         allocate (  areoz_inpt(areo_length)  )
-        call read_data( trim(filename), 'areo', areoz_inpt, no_domain=.true. )
+        call read_data( fileobj, 'areo', areoz_inpt )
         if(mcpu0) print *, 'Have read tes areo data file in aerosol.F: ', areoz_inpt(1:3)
 
         allocate( lat_inpt (jd_inpt) )
@@ -408,11 +407,11 @@ if( do_inpt_dust_cycle  ) then
         allocate( lon_inpt (id_inpt) )
         allocate( lonb_inpt(id_inpt+1) )
 
-        call read_data( trim(filename), 'lat',  lat_inpt,  no_domain=.true. )
-        call read_data( trim(filename), 'latb', latb_inpt, no_domain=.true. )
+        call read_data( fileobj, 'lat',  lat_inpt )
+        call read_data( fileobj, 'latb', latb_inpt )
 
-        call read_data( trim(filename), 'lon',  lon_inpt,  no_domain=.true. )
-        call read_data( trim(filename), 'lonb', lonb_inpt, no_domain=.true. )
+        call read_data( fileobj, 'lon',  lon_inpt )
+        call read_data( fileobj, 'lonb', lonb_inpt )
         latb_inpt(:)= latb_inpt(:)/RADIAN
         lonb_inpt(:)= lonb_inpt(:)/RADIAN
 
@@ -422,13 +421,13 @@ if( do_inpt_dust_cycle  ) then
 
 
         if(mcpu0) print *, 'Prepare read tes tau data from aerosol_init: '
-        call read_data( trim(filename), 'tau', tau2d_inpt, no_domain=.true. )
+        call read_data( fileobj, 'tau', tau2d_inpt )
         if(mcpu0) print *, 'Have read tes tau data file from aerosol_init: '
 
-        call read_data( trim(filename), 'zmax', zmax_inpt, no_domain=.true. )
+        call read_data( fileobj, 'zmax', zmax_inpt )
         if(mcpu0) print *, 'Have read tes zmax data file from aerosol_init: '
 
-        call read_data( trim(filename), 'taufill', taufill_inpt, no_domain=.true. )
+        call read_data( fileobj, 'taufill', taufill_inpt )
         if(mcpu0) print *, 'Have read tes taufill data file: from aerosol_init '
 
         allocate (  areo_cycle(               areo_length)  )
@@ -469,6 +468,7 @@ if( do_inpt_dust_cycle  ) then
         deallocate ( areoz_inpt, zmax_inpt, tau2d_inpt, taufill_inpt  )
         deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
 
+        call close_file(fileobj)
     endif
 
 endif                      !            End of dust cycle input

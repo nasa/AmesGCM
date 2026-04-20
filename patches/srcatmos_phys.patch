@@ -1,5 +1,5 @@
 diff --git a/atmos_param/cg_drag/cg_drag.F90 b/atmos_param/cg_drag/cg_drag.F90
-index fa55527..3dcbe85 100644
+index fa55527..c8d71f8 100644
 --- a/atmos_param/cg_drag/cg_drag.F90
 +++ b/atmos_param/cg_drag/cg_drag.F90
 @@ -75,7 +75,7 @@ integer     :: cg_drag_offset=0   ! offset of calculation from 00Z [ s ]
@@ -35,7 +35,7 @@ index fa55527..3dcbe85 100644
 +real        :: Bt_sh=.000         ! magnitude of momentum flux divided by density  (SH limit )
  
 -real        :: Bt_eq=.000         ! magnitude of momentum flux divided by density  (equator) 
-+real        :: Bt_eq=.08         ! magnitude of momentum flux divided by density  (equator) 
++real        :: Bt_eq=.08         ! magnitude of momentum flux divided by density  (equator)
  
 -real        :: Bt_eq_width=4.0    ! scaling for width of equtorial momentum flux  (equator) 
 +real        :: Bt_eq_width=45.0    ! scaling for width of equtorial momentum flux  (equator)

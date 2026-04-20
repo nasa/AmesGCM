@@ -1,11 +1,21 @@
 module pblmod_mgcm
 
 use constants_mod, only: grav,cp=>cp_air,rgas=>rdgas
-use fms_mod, only: error_mesg, FATAL, file_exist,                      &
-                   open_namelist_file, check_nml_error,                &
-                   mpp_pe, mpp_root_pe, close_file,                    &
-                   write_version_number, stdlog
 
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
+use   mpp_domains_mod, only: domain2d
+use mpp_mod, only: input_nml_file
 implicit none
 
 private
@@ -80,17 +90,11 @@ integer :: unit, io, ierr
 
 mcpu0 = (mpp_pe() == mpp_root_pe())
 
-!     ----- read namelist -----
-
-if (file_exist('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1
-    do while (ierr /= 0)
-        read  (unit, nml=ames_pblmod_nml, iostat=io, end=20)
-        ierr = check_nml_error (io, 'ames_pblmod_nml')
-    enddo
-20    call close_file (unit)
-endif
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=ames_pblmod_nml, iostat=io)
+ierr = check_nml_error(io,'ames_pblmod_nml')
 
 return 
 end subroutine amespbl_nml_read
@@ -98,7 +102,7 @@ end subroutine amespbl_nml_read
 !=====================================================================
 !=====================================================================
 
-subroutine pbl_driver(nvar,nz,tl,pl,uwind,vwind,qvap,qg,gt,psurf, &
+subroutine pbl_driver(nvar,ntg,nz,tl,pl,uwind,vwind,qvap,qg,gt,psurf, &
                 dtime,h2oflux,qrad1, &
                 polarcap,ttend,utend,vtend,qtend,qgtend, &
                 rhouch,htflux,strx,stry,rkh_out,rkm_out,sup,sdn, &
@@ -121,12 +125,13 @@ implicit none
 !     Input Arguments 
 !===============================================================
 integer, intent(in) :: nvar !     Number of tracer to be mixed in the PBL
+integer, intent(in) :: ntg  !     Number of tracer gases to be mixed in the PBL
 integer, intent(in) :: nz   !     Number of layer midpoints
 real*8, dimension(2*nz+3), intent(in) :: tl !     Absolute Temperature (K) at boundaries and midpoints
 real*8, dimension(2*nz+3), intent(in) :: pl !     Pressure (Pa) at boundaries and midpoints
 real*8, dimension(nz), intent(in) :: uwind  !     U wind (m/s) at midpoints
 real*8, dimension(nz), intent(in) :: vwind  !     V wind (m/s) at midpoints
-real*8, dimension(:,:), intent(in) :: qvap  !     tracer Vapor MMR (kg/kg) at midpoints
+real*8, dimension(nz,ntg), intent(in) :: qvap  !     tracer Vapor MMR (kg/kg) at midpoints
 real*8, dimension(nz), intent(in) :: qrad1  !     Radiation Heating Rates (K/s) at midpoints
 real*8, intent(in) :: qg    !     Surface water Ice (kg/m2)
 real*8, intent(in) :: gt    !     Ground Temperature (K)

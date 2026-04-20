@@ -8,11 +8,21 @@ module update_mars_atmos_mod
 
 use constants_mod,    only: grav, cp_air, kappa, co2_lheat
 use time_manager_mod, only: time_type
-use fms_mod,          only: error_mesg, FATAL,       &
-                         open_namelist_file, check_nml_error, &
-                         mpp_pe, mpp_root_pe, close_file,     &
-                         write_version_number, stdlog,        &
-                         uppercase, read_data, write_data, field_size
+
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
+use   mpp_domains_mod, only: domain2d
+use mpp_mod, only: input_nml_file
 implicit none
 
 !---------- interfaces ------------
@@ -26,7 +36,7 @@ logical :: mix_momentum = .true.  !hard-coded logical to apply convective adjust
 
 contains
 
-subroutine co2_condense( is, js, dt, Time, temp, dt_t, &
+subroutine co2_condense( is, ie, js, je, kd, dt, Time, temp, dt_t, &
                         p_half, p_full, precip, dmass, dt_co2 )
 !
 !
@@ -38,17 +48,17 @@ subroutine co2_condense( is, js, dt, Time, temp, dt_t, &
 !  Tcrit is currently formulated as:
 !   Tcrit= 3182.48 / ( 23.3494 - log(pres) )  ;   pres in mb 
 
-integer, intent(in)                       ::  is, js      ! horizontal dimensions
+integer, intent(in)                       ::  is, js, ie, je, kd      ! horizontal dimensions
 real, intent(in)                          ::  dt          ! time step
 type(time_type), intent(in)               ::  Time        ! model tim
-real, intent(in), dimension(:,:,:)        ::  temp        ! temperature at midpoints [K] 
-real, intent(in), dimension(:,:,:)        ::  dt_t        ! dt_t is required temperature tendency to return the atmopshere back to Tcrit 
-real, intent(in), dimension(:,:,:)        ::  p_full      ! layer midpoint pressure [Pa]
-real, intent(in), dimension(:,:,:)        ::  p_half      ! layer interface pressure [Pa]
+real, intent(in), dimension(is:ie,js:je,kd)        ::  temp        ! temperature at midpoints [K] 
+real, intent(in), dimension(is:ie,js:je,kd)        ::  dt_t        ! dt_t is required temperature tendency to return the atmopshere back to Tcrit 
+real, intent(in), dimension(is:ie,js:je,kd)        ::  p_full      ! layer midpoint pressure [Pa]
+real, intent(in), dimension(is:ie,js:je,kd+1)        ::  p_half      ! layer interface pressure [Pa]
 
-real, intent(out), dimension(:,:)         ::  precip      ! CO2 snow accumulation this time step [kg/m2]
-real, intent(out), dimension(:,:,:)       ::  dmass       ! The array dmass may be optionally used to modify the atmospheric mass [kg/m2]
-real, intent(out), dimension(:,:,:)       ::  dt_co2      ! temperature tendency from CO2 condensation [K/s]
+real, intent(out), dimension(is:ie,js:je)         ::  precip      ! CO2 snow accumulation this time step [kg/m2]
+real, intent(out), dimension(is:ie,js:je,kd)       ::  dmass       ! The array dmass may be optionally used to modify the atmospheric mass [kg/m2]
+real, intent(out), dimension(is:ie,js:je,kd)       ::  dt_co2      ! temperature tendency from CO2 condensation [K/s]
 
 ! Local arrays
 real, dimension( size(temp,1),size(temp,2) )  :: tcrit, tnew, tdiff, delp 
@@ -86,7 +96,7 @@ end subroutine co2_condense
 !============================================================================
 !============================================================================
 
-subroutine pass2( is, js, dt, Time, u, v, temp, r, dt_u, dt_v, dt_t, dt_r, &
+subroutine pass2( is, ie, js, je, kd, ntp, dt, Time, u, v, temp, r, dt_u, dt_v, dt_t, dt_r, &
                                                 dt_u_adj, dt_v_adj, dt_t_adj, &
                                           dt_r_adj, delp, p_half, p_full )
 !
@@ -98,20 +108,20 @@ subroutine pass2( is, js, dt, Time, u, v, temp, r, dt_u, dt_v, dt_t, dt_r, &
 !
 
 
-integer, intent(in)                   ::  is, js      ! horizontal dimensions
+integer, intent(in)                   ::  is, js, ie, je, kd, ntp      ! horizontal dimensions
 real, intent(in)                      ::  dt          ! time step
 type(time_type), intent(in)           ::  Time        ! model time
-real, intent(in), dimension(:,:,:)    ::  u           ! u wind at midpoints [m/s]
-real, intent(in), dimension(:,:,:)    ::  v           ! v wind at midpoints [m/s]
-real, intent(in), dimension(:,:,:)    ::  temp        ! temperature at midpoints [K]
-real, intent(in), dimension(:,:,:,:)  ::  r           ! tracers
-real, intent(in), dimension(:,:,:)    ::  dt_u        ! u wind tendency [m/s/s]
-real, intent(in), dimension(:,:,:)    ::  dt_v        ! v wind tendency [m/s/s]
-real, intent(in), dimension(:,:,:)    ::  dt_t        ! temperature tendency [K/s]
-real, intent(in), dimension(:,:,:,:)  ::  dt_r        ! tracer tendency [/s]
-real, intent(in), dimension(:,:,:)    ::  delp        ! layer pressure thickness [Pa]
-real, intent(in), dimension(:,:,:)    ::  p_full      ! layer midpoint pressure [Pa]
-real, intent(in), dimension(:,:,:)    ::  p_half      ! layer interface pressure [Pa]
+real, intent(in), dimension(is:ie,js:je,kd)    ::  u           ! u wind at midpoints [m/s]
+real, intent(in), dimension(is:ie,js:je,kd)    ::  v           ! v wind at midpoints [m/s]
+real, intent(in), dimension(is:ie,js:je,kd)    ::  temp        ! temperature at midpoints [K]
+real, intent(in), dimension(is:ie,js:je,kd,ntp)  ::  r           ! tracers
+real, intent(in), dimension(is:ie,js:je,kd)    ::  dt_u        ! u wind tendency [m/s/s]
+real, intent(in), dimension(is:ie,js:je,kd)    ::  dt_v        ! v wind tendency [m/s/s]
+real, intent(in), dimension(is:ie,js:je,kd)    ::  dt_t        ! temperature tendency [K/s]
+real, intent(in), dimension(is:ie,js:je,kd,ntp)  ::  dt_r        ! tracer tendency [/s]
+real, intent(in), dimension(is:ie,js:je,kd)    ::  delp        ! layer pressure thickness [Pa]
+real, intent(in), dimension(is:ie,js:je,kd)    ::  p_full      ! layer midpoint pressure [Pa]
+real, intent(in), dimension(is:ie,js:je,kd+1)    ::  p_half      ! layer interface pressure [Pa]
 
 real, intent(out), dimension(size(temp,1),size(temp,2),size(temp,3))    ::  dt_u_adj        ! output u wind tendency [m/s/s]
 real, intent(out), dimension(size(temp,1),size(temp,2),size(temp,3))    ::  dt_v_adj        ! output v wind tendency [m/s/s]
@@ -127,14 +137,13 @@ real, dimension( size(temp,1),size(temp,2),size(temp,3) )  :: tnew, &  ! calcula
                                                               unew, &  ! calculated u wind
                                                               vnew     ! calculated v wind
 real, dimension( size(r,1),size(r,2),size(r,3),size(r,4) ) :: rnew     ! calculated tracers
-integer  ::  i, j, id, jd, k, kd, kmax, ntrace, nt   
+integer  ::  i, j, id, jd, k, kmax, ntrace, nt   
 real :: test         ! stability test
 
 !=====================================================================
 
 id= size(temp,1)
 jd= size(temp,2)
-kd= size(temp,3)
 ntrace= size(r,4)
 
 dt_r_adj=0.
@@ -201,7 +210,7 @@ end subroutine pass2
 !============================================================================
 !============================================================================
 
-subroutine legacy_convect( is, js, dt, nz, u, v, temp, &
+subroutine legacy_convect( is, ie, js, je, ntp, dt, nz, u, v, temp, &
 	                       r, dt_u, dt_v, dt_t, dt_r, &
                            dt_u_adj, dt_v_adj, dt_t_adj, &
                            dt_r_adj, delp, p_half, p_full )
@@ -250,19 +259,19 @@ subroutine legacy_convect( is, js, dt, nz, u, v, temp, &
 !  the borderline stable case is handled as unstable.)
 !
 
-integer, intent(in)                   :: is, js, nz    ! dimension lengths
+integer, intent(in)                   :: is, js, ie, je, nz, ntp    ! dimension lengths
 real, intent(in)                      :: dt            ! time step [s]
-real, intent(in), dimension(:,:,:)    ::  u            ! u wind at midpoints [m/s]
-real, intent(in), dimension(:,:,:)    ::  v            ! v wind at midpoints [m/s]
-real, intent(in), dimension(:,:,:)    ::  temp         ! temperature at midpoints [K]
-real, intent(in), dimension(:,:,:,:)  ::  r            ! tracers
-real, intent(in), dimension(:,:,:)    ::  dt_u         ! u wind tendency [m/s/s]
-real, intent(in), dimension(:,:,:)    ::  dt_v         ! v wind tendency [m/s/s]
-real, intent(in), dimension(:,:,:)    ::  dt_t         ! temperature tendency [K/s]
-real, intent(in), dimension(:,:,:,:)  ::  dt_r         ! tracer tendency [/s]
-real, intent(in), dimension(:,:,:)    ::  delp         ! layer pressure thickness [Pa]
-real, intent(in), dimension(:,:,:)    ::  p_full       ! layer midpoint pressure [Pa]
-real, intent(in), dimension(:,:,:)    ::  p_half       ! layer interface pressure [Pa]
+real, intent(in), dimension(is:ie,js:je,nz)    ::  u            ! u wind at midpoints [m/s]
+real, intent(in), dimension(is:ie,js:je,nz)    ::  v            ! v wind at midpoints [m/s]
+real, intent(in), dimension(is:ie,js:je,nz)    ::  temp         ! temperature at midpoints [K]
+real, intent(in), dimension(is:ie,js:je,nz,ntp)  ::  r            ! tracers
+real, intent(in), dimension(is:ie,js:je,nz)    ::  dt_u         ! u wind tendency [m/s/s]
+real, intent(in), dimension(is:ie,js:je,nz)    ::  dt_v         ! v wind tendency [m/s/s]
+real, intent(in), dimension(is:ie,js:je,nz)    ::  dt_t         ! temperature tendency [K/s]
+real, intent(in), dimension(is:ie,js:je,nz,ntp)  ::  dt_r         ! tracer tendency [/s]
+real, intent(in), dimension(is:ie,js:je,nz)    ::  delp         ! layer pressure thickness [Pa]
+real, intent(in), dimension(is:ie,js:je,nz)    ::  p_full       ! layer midpoint pressure [Pa]
+real, intent(in), dimension(is:ie,js:je,nz+1)    ::  p_half       ! layer interface pressure [Pa]
 
 real, intent(out), dimension(size(temp,1),size(temp,2),size(temp,3))    ::  dt_u_adj        ! output u wind tendency [m/s/s]
 real, intent(out), dimension(size(temp,1),size(temp,2),size(temp,3))    ::  dt_v_adj        ! output v wind tendency [m/s/s]

@@ -4,26 +4,31 @@ module mars_physics_update_mod
 !!!!      use mp_mod,          only: domain
 
 !!!!      use fv_diagnostics_mod, only: id_prec
-    use diag_manager_mod,   only: send_data
-    use time_manager_mod,   only: time_type
+use diag_manager_mod,   only: send_data
+use time_manager_mod,   only: time_type
 
-    use constants_mod,    only: grav, kappa, rdgas, pi, radian
+use constants_mod,    only: grav, kappa, rdgas, pi, radian
 
-    use mars_physics_mod,   only: mars_physics, do_qmass
+use mars_physics_mod,   only: mars_physics, do_qmass
 
-    use fms_mod,          only:  mpp_pe, mpp_root_pe, error_mesg, FATAL,       &
-                             open_namelist_file, check_nml_error, &
-                             mpp_pe, mpp_root_pe, close_file,     &
-                             write_version_number, stdlog,        &
-                             uppercase, read_data, write_data, field_size
 
-    use fms2_io_mod, only: file_exists
+use fms_mod,                only: error_mesg, FATAL,       &
+                         check_nml_error, &
+                         mpp_pe, mpp_root_pe, &
+                         write_version_number, stdlog,        &
+                         uppercase
 
-    use field_manager_mod,  only: MODEL_ATMOS, parse, find_field_index
+use fms2_io_mod,            only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                               register_restart_field, register_axis, unlimited, &
+                               open_file, read_restart, write_restart, close_file, &
+                               register_field, read_data, write_data, register_variable_attribute, &
+                               get_global_io_domain_indices, get_variable_size, variable_exists
 
-    use tracer_manager_mod, only: query_method, get_tracer_index,  &
-                              get_number_tracers,get_tracer_names
-    use initracer_mod
+use field_manager_mod,  only: MODEL_ATMOS, parse, find_field_index
+
+use tracer_manager_mod, only: query_method, get_tracer_index,  &
+                          get_number_tracers,get_tracer_names
+use initracer_mod
 
 
 

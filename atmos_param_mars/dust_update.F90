@@ -3,25 +3,27 @@ module dust_update_mod
 
 use constants_mod, only: KAPPA, CP_AIR, RDGAS, GRAV, PI, RADIAN, seconds_per_day  
 
-use fms_mod, only: error_mesg, FATAL,                      &
-                   open_namelist_file, check_nml_error,                &
-                   mpp_pe, mpp_root_pe, close_file,                    &
-                   write_version_number, stdlog,                       &
-                   uppercase, read_data, write_data, field_size
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
 
-use fms2_io_mod,            only:  file_exists
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
 
 use   mpp_domains_mod, only: domain2d
-
-use        fms_io_mod, only: register_restart_field, restart_file_type, &
-                             save_restart, restore_state, get_mosaic_tile_file
+use mpp_mod, only: input_nml_file
 
 use time_manager_mod, only: time_type, get_time
 use diag_manager_mod, only: register_diag_field, send_data,  diag_axis_init
 
 use astronomy_mod,  only  :   mars_calender
 #ifndef RELEASE
-use tagging_method_mod,  only  : tagging_main
+use tagging_method_mod,  only  : tagging_main, tag_sources
 #endif
 
 use mars_surface_mod,  only:  sfc_roughness, sfc_topo 
@@ -141,8 +143,6 @@ logical :: inidust = .false.
 real, dimension(:,:), allocatable :: inidust_scenario
 
 !--- for restart file
-type(restart_file_type), pointer, save :: Dst_restart => NULL()
-type(restart_file_type), pointer, save :: Til_restart => NULL()   !needed for tile restarts
 logical                                :: in_different_file = .false.
 integer,  dimension(:),  allocatable   ::   dust_mass_indx2
 
@@ -163,36 +163,37 @@ contains
 !********************************************************************
 !********************************************************************
 
-subroutine dust_update (   is, js, lon, lat, dt, Time, &
+subroutine dust_update (   is, js, ie, je, kd, ntp, lon, lat, dt, Time, &
                               p_half, p_full, p_pbl, k_pbl, tsfc,  snow, &
                               frost, stress, taudust, taudust_fix, t, tdt, r, rdt, shflx, &
                               rdt_dst, source_mom, lifting_dust ) 
 
 use field_manager_mod, only  : MODEL_ATMOS, find_field_index      
 
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, ie, je, kd, ntp
 real,    intent(in)  :: dt
 type(time_type), intent(in)             :: Time
-real, intent(in),    dimension(:,:)     :: lon
-real, intent(in),    dimension(:,:)     :: lat
-real, intent(in),    dimension(:,:,:)   :: p_half, p_full
-real, intent(in),    dimension(:,:)     :: p_pbl
-integer, intent(in),    dimension(:,:)  :: k_pbl
-real, intent(in),    dimension(:,:)     :: tsfc
-real, intent(in),    dimension(:,:)     :: snow
-real, intent(in),    dimension(:,:)     :: frost
-real, intent(in),    dimension(:,:)     :: stress    
-real, intent(in),    dimension(:,:,:)   :: t,tdt
-real, intent(in),    dimension(:,:,:)   :: taudust
-real, intent(in),    dimension(:,:,:)   :: taudust_fix
-real, intent(in),    dimension(:,:,:,:) :: r,rdt
-real, intent(in),    dimension(:,:)     :: shflx  
+real, intent(in),    dimension(is:ie,js:je)     :: lon
+real, intent(in),    dimension(is:ie,js:je)     :: lat
+real, intent(in),    dimension(is:ie,js:je,kd+1)   :: p_half
+real, intent(in),    dimension(is:ie,js:je,kd)   :: p_full
+real, intent(in),    dimension(is:ie,js:je)     :: p_pbl
+integer, intent(in),    dimension(is:ie,js:je)  :: k_pbl
+real, intent(in),    dimension(is:ie,js:je)     :: tsfc
+real, intent(in),    dimension(is:ie,js:je)     :: snow
+real, intent(in),    dimension(is:ie,js:je)     :: frost
+real, intent(in),    dimension(is:ie,js:je)     :: stress    
+real, intent(in),    dimension(is:ie,js:je,kd)   :: t,tdt
+real, intent(in),    dimension(is:ie,js:je,kd)   :: taudust
+real, intent(in),    dimension(is:ie,js:je,kd)   :: taudust_fix
+real, intent(in),    dimension(is:ie,js:je,kd,ntp) :: r,rdt
+real, intent(in),    dimension(is:ie,js:je)     :: shflx  
 real, intent(out), dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rdt_dst
-real, intent(out),    dimension(:,:)     :: source_mom  
+real, intent(out),    dimension(is:ie,js:je)     :: source_mom  
 logical, intent(out), dimension(size(r,1),size(r,2),size(r,4)) :: lifting_dust
 
 ! -----Local  variables ----------------------
-integer  :: ie, je, id, jd, kd, i, j, k, l, nt,ndx
+integer  :: id, jd, i, j, k, l, nt,ndx
 real, dimension(size(r,1),size(r,2),size(r,3),size(r,4)) :: rnew,rini
 real, dimension(size(r,1),size(r,2),ndust_mass) :: dmcol,source_mass,Nadd,Madd,Nrem,Mrem,dmtau,dccol,dncol
 real, dimension(size(r,1),size(r,2),ndust_mass) :: flux,tau_new,source_dd,source_ws,source_bg,fluxrem,tau_new2,injec,sink
@@ -230,9 +231,7 @@ logical :: used
 integer :: nma_dst,nnb_dst
 
 mcpu0 = (mpp_pe() == mpp_root_pe())
-id= size(t,1); jd= size(t,2); kd= size(t,3) 
-ie= is + id - 1 
-je= js + jd - 1 
+id= size(t,1); jd= size(t,2)
 
 !if (mpp_pe() == mpp_root_pe()) print*,
 
@@ -318,10 +317,10 @@ nma_dst= find_field_index( MODEL_ATMOS, 'dst_mass_mom' )
 nnb_dst= find_field_index( MODEL_ATMOS, 'dst_num_mom' )
 do nt= 1, ndust_mass
     ndx= dust_mass_indx(nt)
-    call tagging_main( (/ "envir" /) ,lat,lon,ndx,field3d=rnew(:,:,:,ndx),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nma_dst), pres=p_half(:,:,:))
-    call tagging_main( (/ "envir" /) ,lat,lon,ndx+1,field3d=rnew(:,:,:,ndx+1),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nnb_dst), pres=p_half(:,:,:))
-    call tagging_main( (/ "activatestorm" /) ,lat,lon,ndx,field3d=rnew(:,:,:,ndx),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nma_dst),pres=p_half(:,:,:),solrun=sols,stress=stress)
-    call tagging_main( (/ "activatestorm" /) ,lat,lon,ndx+1,field3d=rnew(:,:,:,ndx+1),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nnb_dst),pres=p_half(:,:,:),solrun=sols,stress=stress)
+    call tagging_main( (/tag_sources(8)/) ,lat,lon,ndx,field3d=rnew(:,:,:,ndx),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nma_dst), pres=p_half(:,:,:))
+    call tagging_main( (/tag_sources(8)/) ,lat,lon,ndx+1,field3d=rnew(:,:,:,ndx+1),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nnb_dst), pres=p_half(:,:,:))
+    call tagging_main( (/tag_sources(9)/) ,lat,lon,ndx,field3d=rnew(:,:,:,ndx),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nma_dst),pres=p_half(:,:,:),solrun=sols,stress=stress)
+    call tagging_main( (/tag_sources(9)/) ,lat,lon,ndx+1,field3d=rnew(:,:,:,ndx+1),taudust_curr=tau_current(:,:),dustfield=rnew(:,:,:,nnb_dst),pres=p_half(:,:,:),solrun=sols,stress=stress)
 enddo
 #endif
 
@@ -603,7 +602,7 @@ if (interact) then
             !***********************
             ndx= dust_mass_indx(nt)
 #ifndef RELEASE
-            call tagging_main( (/ "geosource" , "loctime", "antigeosource" , "solsource", "cutsource" , "inidust" , "custom_sources" /) ,lat,lon,ndx,field2D=flux(:,:,nt),solrun=sols, sources=sources_scenario*dt,inidust=inidust_scenario,flag='dd',stress=stress,source=flux(:,:,nt)/dt,taudust_curr=tau_current(:,:))
+            call tagging_main( tag_sources(1:7) ,lat,lon,ndx,field2D=flux(:,:,nt),solrun=sols, sources=sources_scenario*dt,inidust=inidust_scenario,flag='dd',stress=stress,source=flux(:,:,nt)/dt,taudust_curr=tau_current(:,:))
 #endif
             source_dd(:,:,nt)=flux(:,:,nt)
 
@@ -692,7 +691,7 @@ if (interact) then
             !***********************
             ndx= dust_mass_indx(nt)
 #ifndef RELEASE
-            call tagging_main( (/ "geosource" , "loctime", "antigeosource" , "solsource", "cutsource" , "inidust" , "custom_sources" /) ,lat,lon,ndx,field2D=flux(:,:,nt),solrun=sols, sources=sources_scenario*dt,inidust=inidust_scenario, flag="ws",stress=stress,source=flux(:,:,nt)/dt,taudust_curr=tau_current(:,:))
+            call tagging_main( tag_sources(1:7) ,lat,lon,ndx,field2D=flux(:,:,nt),solrun=sols, sources=sources_scenario*dt,inidust=inidust_scenario, flag="ws",stress=stress,source=flux(:,:,nt)/dt,taudust_curr=tau_current(:,:))
 #endif
             source_ws(:,:,nt)=flux(:,:,nt)
 
@@ -900,8 +899,7 @@ if (Background) then
         ! tagging methods 
         !***********************
 #ifndef RELEASE
-        call tagging_main( (/ "geosource" , "loctime", "antigeosource" , "solsource",  &
-                    "cutsource" , "custom_sources" , "inidust" /) ,lat,lon,ndx, &
+        call tagging_main( tag_sources(1:7) ,lat,lon,ndx, &
                     field2d=flux(:,:,nt),solrun=sols,sources=sources_scenario*dt, &
                     inidust=inidust_scenario,flag='bg',stress=stress, source=flux(:,:,nt)/dt) 
 #endif
@@ -1204,11 +1202,13 @@ type(time_type), intent(in) :: Time
 type(domain2d),      intent(inout) :: phys_domain
 
 !! Local
+type(FmsNetcdfDomainFile_t) :: Dst_restart
+type(FmsNetcdfFile_t) :: fileobj
 integer  unit, io, ierr 
 integer  id, jd, km, i, j, k, is, js, ie, je, nt, ndx,n
 character (len=128) :: filename, fieldname, tracer_name, tname
 character (len=2) :: aString
-integer   ::   id_inpt, jd_inpt, areo_length, fld_dims(4), iaa, iaa2
+integer   ::   id_inpt, jd_inpt, areo_length, fld_dims(1), iaa, iaa2
 
 real,  dimension(:,:,:), allocatable  :: source_inpt
 real,  dimension(:,:), allocatable  :: sfc_source_inpt
@@ -1230,19 +1230,13 @@ jd= size(lat,2)
 ie= is + id - 1
 je= js + jd - 1
 
-! *********************************************************
-!     ----- read namelist /dust_update_nml/   -----
-! *********************************************************
 
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
 if (firstcall) then 
-    if (file_exists('input.nml')) then
-        unit = open_namelist_file ( )
-        ierr=1; do while (ierr /= 0)
-            read  (unit, nml=dust_update_nml, iostat=io, end=10)
-            ierr = check_nml_error (io, 'dust_update_nml')
-        enddo
-10     call close_file (unit)
-    endif
+    read (input_nml_file, nml=dust_update_nml, iostat=io)
+    ierr = check_nml_error(io,'dust_update_nml')
     firstcall=.false.
 endif
 
@@ -1436,17 +1430,17 @@ if( Background.or.custom_sources.or.dual_mode.gt.0 ) then
    ! *********************************************************
 
     filename= 'INPUT/dust_cycle.nc' 
-    if( file_exists( trim( filename ) ) ) then 
+    if( open_file(fileobj, trim(filename), 'read') ) then 
 
-        call field_size( trim(filename), 'areo', fld_dims )
+        call get_variable_size( fileobj, 'areo', fld_dims )
         areo_length= fld_dims(1)
-        call field_size( trim(filename), 'lon', fld_dims )
+        call get_variable_size( fileobj, 'lon', fld_dims )
         id_inpt= fld_dims(1)
-        call field_size( trim(filename), 'lat', fld_dims )
+        call get_variable_size( fileobj, 'lat', fld_dims )
         jd_inpt= fld_dims(1)
 
         allocate (  areo_dust_scenario(areo_length)  ) 
-        call read_data( trim(filename), 'areo', areo_dust_scenario, no_domain=.true. )
+        call read_data( fileobj, 'areo', areo_dust_scenario )
 
         if(mcpu0) print *, 'Have read tes areo data file in dust_update: ' 
 
@@ -1457,7 +1451,7 @@ if( Background.or.custom_sources.or.dual_mode.gt.0 ) then
             allocate (  source_inpt(id_inpt,jd_inpt,areo_length)  ) 
             allocate (  tau_scenario_ls(is:ie,js:je,  areo_length)  ) 
 
-            call read_data( trim(filename), 'taufill', source_inpt )
+            call read_data( fileobj, 'taufill', source_inpt )
 
             if(mcpu0) print *, 'Have read tes taufill data file in dust_update (cube)' 
 
@@ -1481,16 +1475,16 @@ if( Background.or.custom_sources.or.dual_mode.gt.0 ) then
             allocate( lon_inpt (id_inpt) )
             allocate( lonb_inpt(id_inpt+1) )
 
-            call read_data( trim(filename), 'lat',  lat_inpt,  no_domain=.true. )
-            call read_data( trim(filename), 'latb', latb_inpt, no_domain=.true. )
-            call read_data( trim(filename), 'lon',  lon_inpt,  no_domain=.true. )
-            call read_data( trim(filename), 'lonb', lonb_inpt, no_domain=.true. )
+            call read_data( fileobj, 'lat',  lat_inpt )
+            call read_data( fileobj, 'latb', latb_inpt )
+            call read_data( fileobj, 'lon',  lon_inpt )
+            call read_data( fileobj, 'lonb', lonb_inpt )
             latb_inpt(:)= latb_inpt(:)/RADIAN
             lonb_inpt(:)= lonb_inpt(:)/RADIAN
 
             allocate (  source_inpt  (id_inpt,jd_inpt,areo_length)  ) 
 
-            call read_data( trim(filename), 'taufill', source_inpt, no_domain=.true. )
+            call read_data( fileobj, 'taufill', source_inpt )
             if(mcpu0) print *, 'Have read tes taufill data file in dust_update: ' 
 
             allocate (  tau_scenario_ls(    is:ie,js:je,areo_length)  ) 
@@ -1526,6 +1520,7 @@ if( Background.or.custom_sources.or.dual_mode.gt.0 ) then
         endif        !   horizontal interpolation option 
 #endif  
 
+        call close_file(fileobj)
     else      !       else use default values 
         print *, '############  WARNING:  missing dust cycle input fields '
     endif
@@ -1537,93 +1532,96 @@ endif  !! Background mode
   
 if( ltfrac ) then 
     filename= 'INPUT/localtime_frac.nc' 
-    call field_size( trim(filename), 'bins', fld_dims )
-    bins_length= fld_dims(1)
-    call field_size( trim(filename), 'areo', fld_dims )
-    areo_length= fld_dims(1)
-    call field_size( trim(filename), 'lon', fld_dims )
-    id_inpt= fld_dims(1)
-    call field_size( trim(filename), 'lat', fld_dims )
-    jd_inpt= fld_dims(1)
+    if( open_file(fileobj, trim(filename), 'read') ) then 
+        call get_variable_size( fileobj, 'bins', fld_dims )
+        bins_length= fld_dims(1)
+        call get_variable_size( fileobj, 'areo', fld_dims )
+        areo_length= fld_dims(1)
+        call get_variable_size( fileobj, 'lon', fld_dims )
+        id_inpt= fld_dims(1)
+        call get_variable_size( fileobj, 'lat', fld_dims )
+        jd_inpt= fld_dims(1)
 
-    allocate (  areo_ltfrac(areo_length)  ) 
-    call read_data( trim(filename), 'areo', areo_ltfrac, no_domain=.true. )
-    if(mcpu0) print *, 'Have read ltfrac areo data file in dust_update: ' 
+        allocate (  areo_ltfrac(areo_length)  ) 
+        call read_data( fileobj, 'areo', areo_ltfrac )
+        if(mcpu0) print *, 'Have read ltfrac areo data file in dust_update: ' 
 
-    allocate (  bins_ltfrac(bins_length)  ) 
-    call read_data( trim(filename), 'bins', bins_ltfrac, no_domain=.true. )
+        allocate (  bins_ltfrac(bins_length)  ) 
+        call read_data( fileobj, 'bins', bins_ltfrac )
 
 
-    allocate( lat_inpt (jd_inpt) )
-    allocate( latb_inpt(jd_inpt+1) )
-    allocate( lon_inpt (id_inpt) )
-    allocate( lonb_inpt(id_inpt+1) )
+        allocate( lat_inpt (jd_inpt) )
+        allocate( latb_inpt(jd_inpt+1) )
+        allocate( lon_inpt (id_inpt) )
+        allocate( lonb_inpt(id_inpt+1) )
 
-    call read_data( trim(filename), 'lat',  lat_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'latb', latb_inpt, no_domain=.true. )
-    call read_data( trim(filename), 'lon',  lon_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'lonb', lonb_inpt, no_domain=.true. )
-    latb_inpt(:)= latb_inpt(:)/RADIAN
-    lonb_inpt(:)= lonb_inpt(:)/RADIAN
+        call read_data( fileobj, 'lat',  lat_inpt )
+        call read_data( fileobj, 'latb', latb_inpt )
+        call read_data( fileobj, 'lon',  lon_inpt )
+        call read_data( fileobj, 'lonb', lonb_inpt )
+        latb_inpt(:)= latb_inpt(:)/RADIAN
+        lonb_inpt(:)= lonb_inpt(:)/RADIAN
 
-    ! Keep in memory value of reference tau and reference bin
-    allocate (  tau_ltfrac_old(is:ie,js:je)  )
-    allocate (  bin_ltfrac_old(is:ie,js:je)  )
+        ! Keep in memory value of reference tau and reference bin
+        allocate (  tau_ltfrac_old(is:ie,js:je)  )
+        allocate (  bin_ltfrac_old(is:ie,js:je)  )
 
-    !! Need first time to get first Ls and first tau
-    call get_time(Time, seconds, days)
-    secs= days * seconds_per_day + seconds
-    sols = secs / seconds_per_day
-    days = sols
-    fjd = sols - days    !sol=0 at lon=180
-    call mars_calender( days, fjd, r_orbit, declin, areolat )
+        !! Need first time to get first Ls and first tau
+        call get_time(Time, seconds, days)
+        secs= days * seconds_per_day + seconds
+        sols = secs / seconds_per_day
+        days = sols
+        fjd = sols - days    !sol=0 at lon=180
+        call mars_calender( days, fjd, r_orbit, declin, areolat )
 
-    areolat = areolat * RADIAN
-    if( areolat < 0.0 )  areolat = areolat + 360.0
-    areolat = modulo(areolat,360.)
+        areolat = areolat * RADIAN
+        if( areolat < 0.0 )  areolat = areolat + 360.0
+        areolat = modulo(areolat,360.)
 
-    do iaa= 1, size(areo_ltfrac)
-        if( areo_ltfrac(iaa) > areolat )  then
-            exit
-        else
-            cycle
-        endif
-    enddo
-    ! current tau is tau_scenario at the end of the day (ensure all dust needed is injected
-    tau_ltfrac_old(is:ie,js:je)= tau_scenario_ls(is:ie,js:je,iaa) 
-    ! current bin depends on current local time
-    localtime(:,:)=modulo( modulo(sols+0.5,1.)*24.-(180.-modulo(lon(:,:)*180./pi,360.))*12./180., 24.)
-    do i=1,bins_length-1
-        where(localtime(:,:).lt.bins_ltfrac(i+1).and.localtime(:,:).ge.bins_ltfrac(i))
-            bin_ltfrac_old(:,:)=i
-        end where
-    enddo
+        do iaa= 1, size(areo_ltfrac)
+            if( areo_ltfrac(iaa) > areolat )  then
+                exit
+            else
+                cycle
+            endif
+        enddo
+        ! current tau is tau_scenario at the end of the day (ensure all dust needed is injected
+        tau_ltfrac_old(is:ie,js:je)= tau_scenario_ls(is:ie,js:je,iaa) 
+        ! current bin depends on current local time
+        localtime(:,:)=modulo( modulo(sols+0.5,1.)*24.-(180.-modulo(lon(:,:)*180./pi,360.))*12./180., 24.)
+        do i=1,bins_length-1
+            where(localtime(:,:).lt.bins_ltfrac(i+1).and.localtime(:,:).ge.bins_ltfrac(i))
+                bin_ltfrac_old(:,:)=i
+            end where
+        enddo
 
-    allocate (  ltfrac_scenario_ls(is:ie,js:je,areo_length,bins_length-1)  )
+        allocate (  ltfrac_scenario_ls(is:ie,js:je,areo_length,bins_length-1)  )
 
-    ! Carry out horizontal interpolation 
-    call horiz_interp_init
-    call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
+        ! Carry out horizontal interpolation 
+        call horiz_interp_init
+        call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
 
-    do iaa2=1,bins_length-1
+        do iaa2=1,bins_length-1
 
-        ! read source
-        allocate (  source_inpt(id_inpt,jd_inpt,areo_length)  ) 
-        write(astring,'(i2.2)') bins_ltfrac(iaa2)
-        call read_data( trim(filename), "ltfrac"//trim(astring), source_inpt, no_domain=.true. )
-        if(mcpu0) print *, 'have read ltfrac data file in dust_update: ' 
+            ! read source
+            allocate (  source_inpt(id_inpt,jd_inpt,areo_length)  ) 
+            write(astring,'(i2.2)') bins_ltfrac(iaa2)
+            call read_data( fileobj, "ltfrac"//trim(astring), source_inpt )
+            if(mcpu0) print *, 'have read ltfrac data file in dust_update: ' 
 
-        ! interpolate
-        do iaa= 1, areo_length
-            call horiz_interp( interp, source_inpt (:,:,iaa), ltfrac_scenario_ls(is:ie,js:je,iaa,iaa2) )
-        enddo 
+            ! interpolate
+            do iaa= 1, areo_length
+                call horiz_interp( interp, source_inpt (:,:,iaa), ltfrac_scenario_ls(is:ie,js:je,iaa,iaa2) )
+            enddo 
 
-        deallocate ( source_inpt )
+            deallocate ( source_inpt )
 
-    enddo
+        enddo
 
-    call horiz_interp_del( interp )
-    deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        call horiz_interp_del( interp )
+        deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        call close_file(fileobj)
+    endif
 endif
 
 ! *********************************************************
@@ -1631,78 +1629,81 @@ endif
 ! Read Scenario for iparticle size changes over time  
 if( changeradius ) then 
     filename= 'INPUT/radius_scenario.nc' 
-    call field_size( trim(filename), 'bins', fld_dims )
-    radbins_length= fld_dims(1)
-    call field_size( trim(filename), 'areo', fld_dims )
-    areo_length= fld_dims(1)
-    call field_size( trim(filename), 'lon', fld_dims )
-    id_inpt= fld_dims(1)
-    call field_size( trim(filename), 'lat', fld_dims )
-    jd_inpt= fld_dims(1)
+    if( open_file(fileobj, trim(filename), 'read') ) then 
+        call get_variable_size( fileobj, 'bins', fld_dims )
+        radbins_length= fld_dims(1)
+        call get_variable_size( fileobj, 'areo', fld_dims )
+        areo_length= fld_dims(1)
+        call get_variable_size( fileobj, 'lon', fld_dims )
+        id_inpt= fld_dims(1)
+        call get_variable_size( fileobj, 'lat', fld_dims )
+        jd_inpt= fld_dims(1)
 
-    allocate (  areo_radius(areo_length)  ) 
-    call read_data( trim(filename), 'areo', areo_radius, no_domain=.true. )
-    if(mcpu0) print *, 'Have read radius_scenario areo data file in dust_update: ' 
+        allocate (  areo_radius(areo_length)  ) 
+        call read_data( fileobj, 'areo', areo_radius )
+        if(mcpu0) print *, 'Have read radius_scenario areo data file in dust_update: ' 
 
-    allocate (  bins_radius(radbins_length)  ) 
-    call read_data( trim(filename), 'bins', bins_radius, no_domain=.true. )
+        allocate (  bins_radius(radbins_length)  ) 
+        call read_data( fileobj, 'bins', bins_radius )
 
-    allocate( lat_inpt (jd_inpt) )
-    allocate( latb_inpt(jd_inpt+1) )
-    allocate( lon_inpt (id_inpt) )
-    allocate( lonb_inpt(id_inpt+1) )
+        allocate( lat_inpt (jd_inpt) )
+        allocate( latb_inpt(jd_inpt+1) )
+        allocate( lon_inpt (id_inpt) )
+        allocate( lonb_inpt(id_inpt+1) )
 
-    call read_data( trim(filename), 'lat',  lat_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'latb', latb_inpt, no_domain=.true. )
-    call read_data( trim(filename), 'lon',  lon_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'lonb', lonb_inpt, no_domain=.true. )
-    latb_inpt(:)= latb_inpt(:)/RADIAN
-    lonb_inpt(:)= lonb_inpt(:)/RADIAN
+        call read_data( fileobj, 'lat',  lat_inpt )
+        call read_data( fileobj, 'latb', latb_inpt )
+        call read_data( fileobj, 'lon',  lon_inpt )
+        call read_data( fileobj, 'lonb', lonb_inpt )
+        latb_inpt(:)= latb_inpt(:)/RADIAN
+        lonb_inpt(:)= lonb_inpt(:)/RADIAN
 
-    !! need first time to get first ls and first tau
-    call get_time(time, seconds, days)
-    secs= days * seconds_per_day + seconds
-    sols = secs / seconds_per_day
-    days = sols
-    fjd = sols - days    !sol=0 at lon=180
-    call mars_calender( days, fjd, r_orbit, declin, areolat )
+        !! need first time to get first ls and first tau
+        call get_time(time, seconds, days)
+        secs= days * seconds_per_day + seconds
+        sols = secs / seconds_per_day
+        days = sols
+        fjd = sols - days    !sol=0 at lon=180
+        call mars_calender( days, fjd, r_orbit, declin, areolat )
 
-    areolat = areolat * radian
-    if( areolat < 0.0 )  areolat = areolat + 360.0
-    areolat = modulo(areolat,360.)
+        areolat = areolat * radian
+        if( areolat < 0.0 )  areolat = areolat + 360.0
+        areolat = modulo(areolat,360.)
 
-    do iaa= 1, size(areo_radius)
-        if( areo_radius(iaa) > areolat )  then
-            exit
-        else
-            cycle
-        endif
-    enddo
-       
-    allocate (  radius_scenario_ls(is:ie,js:je,areo_length,radbins_length)  )
+        do iaa= 1, size(areo_radius)
+            if( areo_radius(iaa) > areolat )  then
+                exit
+            else
+                cycle
+            endif
+        enddo
+           
+        allocate (  radius_scenario_ls(is:ie,js:je,areo_length,radbins_length)  )
 
-    ! Carry out horizontal interpolation 
-    call horiz_interp_init
-    call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
+        ! Carry out horizontal interpolation 
+        call horiz_interp_init
+        call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
 
-    do iaa2=1,radbins_length
+        do iaa2=1,radbins_length
 
-        ! read source
-        allocate (  source_inpt(id_inpt,jd_inpt,areo_length)  ) 
-        write(astring,'(i2.2)') bins_radius(iaa2)
-        call read_data( trim(filename), "rad"//trim(astring), source_inpt, no_domain=.true. )
-        if(mcpu0) print *, 'have read radius_scenario data file in dust_update: ' 
+            ! read source
+            allocate (  source_inpt(id_inpt,jd_inpt,areo_length)  ) 
+            write(astring,'(i2.2)') bins_radius(iaa2)
+            call read_data( fileobj, "rad"//trim(astring), source_inpt )
+            if(mcpu0) print *, 'have read radius_scenario data file in dust_update: ' 
 
-        ! interpolate
-        do iaa= 1, areo_length
-            call horiz_interp( interp, source_inpt (:,:,iaa), radius_scenario_ls(is:ie,js:je,iaa,iaa2) )
-        enddo 
+            ! interpolate
+            do iaa= 1, areo_length
+                call horiz_interp( interp, source_inpt (:,:,iaa), radius_scenario_ls(is:ie,js:je,iaa,iaa2) )
+            enddo 
 
-        deallocate ( source_inpt )
-    enddo
+            deallocate ( source_inpt )
+        enddo
 
-    call horiz_interp_del( interp )
-    deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        call horiz_interp_del( interp )
+        deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        call close_file(fileobj)
+    endif
 endif
 
 ! *********************************************************
@@ -1711,50 +1712,53 @@ endif
 
 if( custom_sources ) then 
     filename= 'INPUT/sources.nc' 
-    call field_size( trim(filename), 'areo', fld_dims )
-    areo_length= fld_dims(1)
-    call field_size( trim(filename), 'lon', fld_dims )
-    id_inpt= fld_dims(1)
-    call field_size( trim(filename), 'lat', fld_dims )
-    jd_inpt= fld_dims(1)
+    if( open_file(fileobj, trim(filename), 'read') ) then 
+        call get_variable_size( fileobj, 'areo', fld_dims )
+        areo_length= fld_dims(1)
+        call get_variable_size( fileobj, 'lon', fld_dims )
+        id_inpt= fld_dims(1)
+        call get_variable_size( fileobj, 'lat', fld_dims )
+        jd_inpt= fld_dims(1)
 
-    allocate (  areo_sources(areo_length)  ) 
-    call read_data( trim(filename), 'areo', areo_sources, no_domain=.true. )
+        allocate (  areo_sources(areo_length)  ) 
+        call read_data( fileobj, 'areo', areo_sources )
 
-    if(mcpu0) print *, 'Have read sources areo data file in dust_update: ' 
+        if(mcpu0) print *, 'Have read sources areo data file in dust_update: ' 
 
-    allocate( lat_inpt (jd_inpt) )
-    allocate( latb_inpt(jd_inpt+1) )
-    allocate( lon_inpt (id_inpt) )
-    allocate( lonb_inpt(id_inpt+1) )
+        allocate( lat_inpt (jd_inpt) )
+        allocate( latb_inpt(jd_inpt+1) )
+        allocate( lon_inpt (id_inpt) )
+        allocate( lonb_inpt(id_inpt+1) )
 
-    call read_data( trim(filename), 'lat',  lat_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'latb', latb_inpt, no_domain=.true. )
-    call read_data( trim(filename), 'lon',  lon_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'lonb', lonb_inpt, no_domain=.true. )
-    latb_inpt(:)= latb_inpt(:)/RADIAN
-    lonb_inpt(:)= lonb_inpt(:)/RADIAN
+        call read_data( fileobj, 'lat',  lat_inpt )
+        call read_data( fileobj, 'latb', latb_inpt )
+        call read_data( fileobj, 'lon',  lon_inpt )
+        call read_data( fileobj, 'lonb', lonb_inpt )
+        latb_inpt(:)= latb_inpt(:)/RADIAN
+        lonb_inpt(:)= lonb_inpt(:)/RADIAN
 
-    allocate (  source_inpt  (id_inpt,jd_inpt,areo_length)  ) 
+        allocate (  source_inpt  (id_inpt,jd_inpt,areo_length)  ) 
 
-    call read_data( trim(filename), 'data', source_inpt, no_domain=.true. )
-    if(mcpu0) print *, 'Have read sources data file in dust_update: ' 
+        call read_data( fileobj, 'data', source_inpt )
+        if(mcpu0) print *, 'Have read sources data file in dust_update: ' 
 
-    allocate (  sources_scenario_ls(is:ie,js:je,areo_length)  ) 
+        allocate (  sources_scenario_ls(is:ie,js:je,areo_length)  ) 
 
-    ! Carry out horizontal interpolation 
-    call horiz_interp_init
+        ! Carry out horizontal interpolation 
+        call horiz_interp_init
 
-    call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
+        call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
 
 
-    do iaa= 1, areo_length
-        call horiz_interp( interp, source_inpt (:,:,iaa), sources_scenario_ls(is:ie,js:je,iaa) )
-    enddo 
-    call horiz_interp_del( interp )
+        do iaa= 1, areo_length
+            call horiz_interp( interp, source_inpt (:,:,iaa), sources_scenario_ls(is:ie,js:je,iaa) )
+        enddo 
+        call horiz_interp_del( interp )
 
-    deallocate ( source_inpt )
-    deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        deallocate ( source_inpt )
+        deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        call close_file(fileobj)
+    endif
 
 endif
 
@@ -1764,42 +1768,45 @@ endif
 
 if( inidust ) then 
     filename= 'INPUT/inidust.nc' 
-    call field_size( trim(filename), 'lon', fld_dims )
-    id_inpt= fld_dims(1)
-    call field_size( trim(filename), 'lat', fld_dims )
-    jd_inpt= fld_dims(1)
+    if( open_file(fileobj, trim(filename), 'read') ) then 
+        call get_variable_size( fileobj, 'lon', fld_dims )
+        id_inpt= fld_dims(1)
+        call get_variable_size( fileobj, 'lat', fld_dims )
+        jd_inpt= fld_dims(1)
 
-    if(mcpu0) print *, 'Have read inidust areo data file in dust_update: ' 
+        if(mcpu0) print *, 'Have read inidust areo data file in dust_update: ' 
 
-    allocate( lat_inpt (jd_inpt) )
-    allocate( latb_inpt(jd_inpt+1) )
-    allocate( lon_inpt (id_inpt) )
-    allocate( lonb_inpt(id_inpt+1) )
+        allocate( lat_inpt (jd_inpt) )
+        allocate( latb_inpt(jd_inpt+1) )
+        allocate( lon_inpt (id_inpt) )
+        allocate( lonb_inpt(id_inpt+1) )
 
-    call read_data( trim(filename), 'lat',  lat_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'latb', latb_inpt, no_domain=.true. )
-    call read_data( trim(filename), 'lon',  lon_inpt,  no_domain=.true. )
-    call read_data( trim(filename), 'lonb', lonb_inpt, no_domain=.true. )
-    latb_inpt(:)= latb_inpt(:)/RADIAN
-    lonb_inpt(:)= lonb_inpt(:)/RADIAN
+        call read_data( fileobj, 'lat',  lat_inpt )
+        call read_data( fileobj, 'latb', latb_inpt )
+        call read_data( fileobj, 'lon',  lon_inpt )
+        call read_data( fileobj, 'lonb', lonb_inpt )
+        latb_inpt(:)= latb_inpt(:)/RADIAN
+        lonb_inpt(:)= lonb_inpt(:)/RADIAN
 
-    allocate (  sfc_source_inpt  (id_inpt,jd_inpt)  ) 
+        allocate (  sfc_source_inpt  (id_inpt,jd_inpt)  ) 
 
-    call read_data( trim(filename), 'distrib', sfc_source_inpt, no_domain=.true. )
-    if(mcpu0) print *, 'Have read inidust taufill data file in dust_update: ' 
+        call read_data( fileobj, 'distrib', sfc_source_inpt )
+        if(mcpu0) print *, 'Have read inidust taufill data file in dust_update: ' 
 
-    allocate (  inidust_scenario(is:ie,js:je)  ) 
+        allocate (  inidust_scenario(is:ie,js:je)  ) 
 
-    ! Carry out horizontal interpolation 
-    call horiz_interp_init
+        ! Carry out horizontal interpolation 
+        call horiz_interp_init
 
-    call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
+        call horiz_interp_new( Interp,lonb_inpt,latb_inpt,lon ,lat ,interp_method= 'bilinear' )
 
-    call horiz_interp( Interp, sfc_source_inpt (:,:), inidust_scenario(is:ie,js:je) )
-    call horiz_interp_del( Interp )
+        call horiz_interp( Interp, sfc_source_inpt (:,:), inidust_scenario(is:ie,js:je) )
+        call horiz_interp_del( Interp )
 
-    deallocate ( sfc_source_inpt )
-    deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        deallocate ( sfc_source_inpt )
+        deallocate ( lat_inpt, latb_inpt, lon_inpt, lonb_inpt )
+        call close_file(fileobj)
+    endif
 endif
 
 
@@ -1817,27 +1824,26 @@ allocate (  tcol_core (is:ie,js:je,ndust_mass)  )
 
 filename= 'INPUT/soil_accum2.res.nc'  
 
-call dstup_register_restart(is,ie,js,je,'soil_accum2.res.nc',phys_domain)
+if (open_file(Dst_restart,filename,"read", phys_domain, is_restart=.true.)) then
+    call dstup_register_restart(Dst_restart)
+    call read_restart(Dst_restart)
+    call close_file(Dst_restart)
 
-if( file_exists( trim( filename ) ) ) then
-    
-    call restore_state(Dst_restart)
-    if (in_different_file) call restore_state(Til_restart)  
     if(mcpu0) print *, 'Have read soil dust accm2 restart file:',ndust_mass_rst,'Bins'
-
-    do nt= 1, ndust_mass
-        if(mcpu0)  print *, 'surface dust mass',  nt, js, sfc_dust_mass(:,:,nt)
-    enddo
 
 else    !    Default case (eg cold case)
     sfc_dust_mass(is:ie,js:je,:)= dust_surf_ini ! in namelist  
+
 endif
+do nt= 1, ndust_mass
+    if(mcpu0)  print *, 'surface dust mass',  nt, js, sfc_dust_mass(:,:,nt)
+enddo
 
 #ifndef RELEASE
 ! Tagging method for initial sources of dust
 do nt= 1, ndust_mass
     ndx= dust_mass_indx(nt)
-    call tagging_main( (/ "geosource" , "antigeosource" , "cutsource" , "inidust" /) , &
+    call tagging_main( (/ tag_sources(1) , tag_sources(3) , tag_sources(5) , tag_sources(7) /) , &
                 lat,lon,ndx,field2d=sfc_dust_mass(:,:,nt),inidust=inidust_scenario,flag="in")
 enddo    ! nt dust mass
 #endif
@@ -1850,95 +1856,94 @@ end subroutine dust_update_init
 ! =====================================================================
 
 
-subroutine dust_update_end
+subroutine dust_update_end(phys_domain)
 ! 
 ! Write soil dust accumulations to netCDF file
 
-
 implicit none
+type(domain2d),      intent(inout) :: phys_domain
 
-call save_restart(Dst_restart)
-if(in_different_file) call save_restart(Til_restart)
+call dstup_restart(phys_domain)
 
 end subroutine dust_update_end
 
-! =====================================================================
-! =====================================================================
-
-subroutine read_sfc_dust_mass_rst(  is, ie, js, je, km )
-!
-! Read surface dust accumulations from netCDF file:   
-! fname= 'INPUT/soil_accum.res.nc'        field_name= 'sfc_dust'
-!
-
-implicit none
-
-integer,             intent(in) :: is, ie, js, je
-integer,             intent(out) :: km
-
-!  ---------- local variables --------------------
-character(len=128)   :: fname, filename
-integer              :: i, j, k, im, jm, fld_dims(4), nmass
-real, allocatable :: w3d(:,:,:)
-
-fname= 'INPUT/soil_accum2.res.nc'
-
-call field_size( trim(fname), 'sfc_dust_mass', fld_dims )
-
-im= fld_dims(1);   jm= fld_dims(2);  km= fld_dims(3)
-if(mcpu0)  print *, 'Surface dust mass restart dims: ',  im, jm, km, is, ie, js, je
-
-allocate ( w3d (is:ie,js:je,km) )
-nmass= MIN( km,ndust_mass )
-
-call read_data(trim(fname), 'sfc_dust_mass', w3d )
-
-! copy the first nmass into the sfc_dust_mass array 
-do k=1, nmass
-    sfc_dust_mass(is:ie,js:je,k) = w3d(is:ie,js:je,k)
-enddo
-
-deallocate( w3d )
-
-end  subroutine read_sfc_dust_mass_rst
-
 
 !--------------------------------------------------------
 !--------------------------------------------------------
 
-subroutine dstup_register_restart(is,ie,js,je,fname,phys_domain)
+subroutine dstup_register_restart(Dst_restart)
 ! register restart field to be written to restart file.
-integer,                          intent(in) :: is,ie,js,je
-character(len=*),                 intent(in) :: fname
+type(FmsNetcdfDomainFile_t),   intent(inout) :: Dst_restart
 character(len=64)                            :: fname2
-type(domain2d),                intent(inout) :: phys_domain
 integer :: id_restart, ndx, n
 character (len=128) :: tracer_name
+character(len=8), dimension(3)               ::  dim_names_3d  !< String array of dimension names
 
-call get_mosaic_tile_file(fname, fname2, is_no_domain=.false., domain=phys_domain )
 
-!default restart file: read/write definition
-allocate(Dst_restart)
-if(trim(fname2) == trim(fname)) then
-    Til_restart => Dst_restart
-    in_different_file = .false.
-else
-    in_different_file = .true.
-    allocate(Til_restart)
-endif
+
+dim_names_3d(1) = "xaxis_1"
+dim_names_3d(2) = "yaxis_1"
+dim_names_3d(3) = "Time"
+
+call register_axis(Dst_restart, dim_names_3d(1), "x")
+call register_axis(Dst_restart, dim_names_3d(2), "y")
+if (.not. Dst_restart%mode_is_append) call register_axis(Dst_restart, "Time", unlimited)
+
+!< Register the domain decomposed dimensions as variables so that the combiner can work
+!! correctly
+call register_field(Dst_restart, dim_names_3d(1), "double", (/dim_names_3d(1)/))
+call register_field(Dst_restart, dim_names_3d(2), "double", (/dim_names_3d(2)/))
 
 do n=1,ndust_mass
     ndx= dust_mass_indx(n)
     call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)
-    id_restart = register_restart_field(Til_restart, fname, trim(tracer_name), sfc_dust_mass(is:ie,js:je,n), domain=phys_domain,mandatory=.false.)
+    call register_restart_field(Dst_restart, trim(tracer_name), sfc_dust_mass(:,:,n), dim_names_3d, is_optional=.true.)
 end do
 
-id_restart = register_restart_field(Dst_restart, fname, 'dgdm_type', dgdm_type, no_domain = .true.,mandatory=.false.)
+call register_restart_field(Dst_restart, 'dgdm_type', dgdm_type, (/dim_names_3d(3)/), is_optional=.true.)
 
 
 
 end subroutine dstup_register_restart
 
+!--------------------------------------------------------
+!--------------------------------------------------------
+!< Add_dimension_data: Adds dummy data for the domain decomposed axis
+subroutine add_domain_dims(Dst_restart)
+type(FmsNetcdfDomainFile_t) :: Dst_restart !< Fms2io domain decomposed fileobj
+integer, dimension(:), allocatable :: buffer !< Buffer with axis data
+integer :: is, ie !< Starting and Ending indices for data
+
+call get_global_io_domain_indices(Dst_restart, "xaxis_1", is, ie, indices=buffer)
+call write_data(Dst_restart, "xaxis_1", buffer)
+deallocate(buffer)
+
+call get_global_io_domain_indices(Dst_restart, "yaxis_1", is, ie, indices=buffer)
+call write_data(Dst_restart, "yaxis_1", buffer)
+deallocate(buffer)
+
+end subroutine add_domain_dims
+
+
+!--------------------------------------------------------
+!--------------------------------------------------------
+
+subroutine dstup_restart(phys_domain)
+
+type(domain2d),      intent(inout) :: phys_domain
+type(FmsNetcdfDomainFile_t) ::  Dst_restart !< Fms2io domain decomposed fileobj
+character(len=128) :: filename !< Restart filename
+
+filename = "RESTART/soil_accum2.res.nc"
+if (open_file(Dst_restart,trim(filename),"overwrite", phys_domain, is_restart=.true.)) then
+    call dstup_register_restart(Dst_restart)
+    call write_restart(Dst_restart)
+    call add_domain_dims(Dst_restart)
+    call close_file(Dst_restart)
+endif
+
+
+end subroutine dstup_restart
 !--------------------------------------------------------
 !--------------------------------------------------------
   

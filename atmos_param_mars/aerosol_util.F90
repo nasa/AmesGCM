@@ -1,13 +1,19 @@
 module aerosol_util_mod
 
-use fms_mod,                only: error_mesg, FATAL,       &
-                                 open_namelist_file, check_nml_error, &
-                                 mpp_pe, mpp_root_pe, close_file,     &
-                                 write_version_number, stdlog,        &
-                                 uppercase, read_data, write_data, field_size
 
-use fms2_io_mod,            only:  file_exists
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
 
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
+use   mpp_mod, only: input_nml_file
 implicit none
 private
 
@@ -40,16 +46,11 @@ subroutine init_aerosol_flags
 integer  unit, io, ierr
 
 
-!     ----- read namelist -----
-
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1; do while (ierr /= 0)
-        read  (unit, nml=aerosol_util_nml, iostat=io, end=10)
-        ierr = check_nml_error (io, 'aerosol_util_nml')
-    enddo
-10     call close_file (unit)
-endif
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=aerosol_util_nml, iostat=io)
+ierr = check_nml_error(io,'aerosol_util_nml')
 
 if (mpp_pe() == mpp_root_pe()) write (stdlog(),nml=aerosol_util_nml)
 

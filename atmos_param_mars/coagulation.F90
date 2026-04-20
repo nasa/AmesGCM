@@ -2,11 +2,19 @@ module coagulation_mod
 
 use constants_mod, only: pi,grav,avogno,wtmco2,rdgas,kbz=>kboltz
 use initracer_mod
-use fms_mod, only: error_mesg, FATAL, file_exist,                      &
-                   open_namelist_file, check_nml_error,                &
-                   mpp_pe, mpp_root_pe, close_file,                    &
-                   write_version_number, stdlog,                       &
-                   uppercase, read_data, write_data, field_size
+
+use   mpp_mod, only: input_nml_file
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
 
 implicit none
 !private
@@ -56,15 +64,16 @@ contains
 !#######################################################################
 
 !======================================================================
-subroutine coagul_main(is, js, lon, lat, dt, temp, p_half, p_full, rini, rdt_coag)
+subroutine coagul_main(is, js, ie, je, kd, ntp, lon, lat, dt, temp, p_half, p_full, rini, rdt_coag)
 
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, ie, je, kd, ntp
 real,    intent(in)  :: dt
-real, intent(in),    dimension(:,:)     :: lon
-real, intent(in),    dimension(:,:)     :: lat
-real, intent(in),    dimension(:,:,:)   :: temp
-real, intent(in),    dimension(:,:,:)   :: p_half, p_full
-real, intent(in),    dimension(:,:,:,:)   :: rini
+real, intent(in),    dimension(is:ie,js:je)     :: lon
+real, intent(in),    dimension(is:ie,js:je)     :: lat
+real, intent(in),    dimension(is:ie,js:je,kd)   :: temp
+real, intent(in),    dimension(is:ie,js:je,kd+1)   :: p_half
+real, intent(in),    dimension(is:ie,js:je,kd)   :: p_full
+real, intent(in),    dimension(is:ie,js:je,kd,ntp)   :: rini
 real, intent(inout), dimension(size(rini,1),size(rini,2),size(rini,3),size(rini,4)) :: rdt_coag
 
 !======================================================================
@@ -73,7 +82,7 @@ real, intent(inout), dimension(size(rini,1),size(rini,2),size(rini,3),size(rini,
 !-----------------------------------------------------------------------
 !   Local variables 
 !-----------------------------------------------------------------------
-integer  :: ie, je, id, jd, kd, i, j, k, l, ii, jj, ndx,nt
+integer  :: id, jd, i, j, k, l, ii, jj, ndx,nt
 real dens,dev,cst,sig0
 real mfp0,temp0,rad0,rad10,rad20,rho0,pres0
 real term1,term2,kernel,norm
@@ -86,9 +95,7 @@ integer :: t1,t2,p1,p2,m1,m2
 
 mcpu0 = (mpp_pe() == mpp_root_pe()) 
 
-id= size(temp,1); jd= size(temp,2); kd= size(temp,3)
-ie= is + id - 1
-je= js + jd - 1
+id= size(temp,1); jd= size(temp,2)
 
 !-----------------------------------------------------------------------
 !*** 1) Initialisations
@@ -584,18 +591,12 @@ subroutine coagul_init()
 !! Local
 integer  unit, io, ierr 
 
-! *********************************************************
-!     ----- read namelist /dust_update_nml/   -----
-! *********************************************************
 
-if (file_exist('input.nml')) then
-      unit = open_namelist_file ( )
-      ierr=1; do while (ierr /= 0)
-         read  (unit, nml=coagulation_nml, iostat=io, end=10)
-         ierr = check_nml_error (io, 'coagulation_nml')
-      enddo
-10     call close_file (unit)
-endif
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=coagulation_nml, iostat=io)
+ierr = check_nml_error(io,'coagulation_nml')
 
 if (mpp_pe() == mpp_root_pe()) write (stdlog(),nml=coagulation_nml)
 

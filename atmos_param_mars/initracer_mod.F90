@@ -7,11 +7,20 @@ use constants_mod, only: grav,cp=>cp_air,rgas=>rdgas,pi,kboltz
 use field_manager_mod, only: MODEL_ATMOS, parse, find_field_index, num_tags, find_tagging_index
 use tracer_manager_mod, only: query_method, get_tracer_index,  &
                        get_number_tracers, get_tracer_names
-use fms_mod, only: error_mesg, FATAL, file_exist,                      &
-           open_namelist_file, check_nml_error,                &
-           mpp_pe, mpp_root_pe, close_file,                    &
-           write_version_number, stdlog,                       &
-           uppercase, read_data, write_data, field_size
+
+use   mpp_mod, only: input_nml_file
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
 use aerosol_util_mod, only: Reff_backgd, do_15band
 
 implicit none

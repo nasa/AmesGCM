@@ -13,7 +13,7 @@ public :: ames_pbl
 
 contains
 
-subroutine ames_pbl(is,js,dt,ps,p_half,p_full,z_half,akm,akh,  &
+subroutine ames_pbl(id,jd,kd,ntp,dt,ps,p_half,p_full,z_half,akm,akh,  &
                   u,v,t,tsurf,q,snow,frost,tdtlw,tau_x,tau_y,&
                   sens,evap,&
                   udt,vdt,tdt,qdt, &
@@ -22,33 +22,33 @@ subroutine ames_pbl(is,js,dt,ps,p_half,p_full,z_half,akm,akh,  &
                   wind,z_pbl,p_pbl,pbl_lev,rkh_out,Time_next)
 
 implicit none
-integer, intent(in) :: is, js
+integer, intent(in) :: id, jd, kd, ntp
 type(time_type), intent(in) :: Time_next
 real, intent(in) :: dt
-real, intent(in),    dimension(:,:,:)   :: p_half, &                                ! layer interface pressure [Pa]
-                                        p_full, &                                   ! layer midpoint pressure [Pa]
-                                        z_half, &                                   ! layer interface heights [m]
+real, intent(in),    dimension(id,jd,kd+1)   :: p_half, &                                ! layer interface pressure [Pa]
+                                        z_half                                   ! layer interface heights [m]
+real, intent(in),    dimension(id,jd,kd)   :: p_full, &                                   ! layer midpoint pressure [Pa]
                                         tdtlw                                       ! radiative heating [K/s]
-real, intent(in),    dimension(:,:,:)   :: u, &                                     ! u wind [m/s]
+real, intent(in),    dimension(id,jd,kd)   :: u, &                                     ! u wind [m/s]
                                         v, &                                        ! v wind [m/s]
                                         t                                           ! temperature [K]
-real, intent(in),    dimension(:,:,:,:)   :: q                                      ! tracers [*/kg]
-real, intent(in),    dimension(size(t,1),size(t,2)) :: tsurf, &                     ! surface temperature
+real, intent(in),    dimension(id,jd,kd,ntp)   :: q                                      ! tracers [*/kg]
+real, intent(in),    dimension(id,jd) :: tsurf, &                     ! surface temperature
                                                     ps                              ! surface pressure
-real, intent(in), dimension(size(t,1),size(t,2),size(t,3))  :: tdt, &               ! temperature tendency [K/s]
+real, intent(in), dimension(id,jd,kd)  :: tdt, &               ! temperature tendency [K/s]
                                                             udt, &                  ! u wind tendency [m/s/s]
                                                             vdt                     ! v wind tendency [m/s/s]
-real, intent(in), dimension(:,:,:,:)  :: qdt                                        ! tracer tendency [*/kg/s]
-real, intent(inout), dimension(size(t,1),size(t,2)) :: snow, &                      ! co2 surface ice
+real, intent(in), dimension(id,jd,kd,ntp)  :: qdt                                        ! tracer tendency [*/kg/s]
+real, intent(inout), dimension(id,jd) :: snow, &                      ! co2 surface ice
                                                     frost                           ! h2o surface ice
-integer, intent(out), dimension(size(t,1),size(t,2)) :: pbl_lev                     ! pbl top index
-real, intent(out),   dimension(:,:,:)   :: akm, &                                   ! momentum mixing coefficient
+integer, intent(out), dimension(id,jd) :: pbl_lev                     ! pbl top index
+real, intent(out),   dimension(id,jd,kd)   :: akm, &                                   ! momentum mixing coefficient
                                         akh                                         ! heat mixing coefficient
-real, intent(out), dimension(size(t,1),size(t,2),size(t,3)) :: tdt_pbl, &           ! pbl temperature tendency [K/s]
+real, intent(out), dimension(id,jd,kd) :: tdt_pbl, &           ! pbl temperature tendency [K/s]
                                                             udt_pbl, &              ! pbl u wind tendency [m/s/s]
                                                             vdt_pbl                 ! pbl v wind tendency [m/s/s]
-real, intent(out), dimension(size(q,1),size(q,2),size(q,3),size(q,4)) :: qdt_pbl    ! pbl tracer tendency [*/kg/s]
-real, intent(out), dimension(size(t,1),size(t,2),2*size(t,3)+1) :: rkh_out          ! Output eddy mixing coefficient (m2/s)
+real, intent(out), dimension(id,jd,kd,ntp) :: qdt_pbl    ! pbl tracer tendency [*/kg/s]
+real, intent(out), dimension(id,jd,2*kd+1) :: rkh_out          ! Output eddy mixing coefficient (m2/s)
                                                     
 ! local variables
 real,   dimension(size(t,1),size(t,2)) :: ustar,ustar2,thstar,thstar2,cdm,cdm2,cdh,cdh2
@@ -170,7 +170,7 @@ do i=1,ie
         dsens_olda = dsens_datm(i,j)
         dsens_olds = dsens_dsrf(i,j)
 
-        call pbl_driver(nvar,nz,tl,pl,u_bl(i,j,:),v_bl(i,j,:),q_bl(i,j,:,:), &
+        call pbl_driver(nvar,ntrace_gas,nz,tl,pl,u_bl(i,j,:),v_bl(i,j,:),q_bl(i,j,:,:), &
                    frost(i,j),  &
                    tsurf(i,j),  &
                    ps(i,j), &

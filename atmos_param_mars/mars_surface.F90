@@ -6,18 +6,22 @@ module mars_surface_mod
 use     constants_mod, only: PI, KAPPA, CP_AIR, GRAV, STEFAN, co2_lheat, SECONDS_PER_DAY
 
 use           fms_mod, only: error_mesg, FATAL,       &
-                             open_namelist_file, check_nml_error, &
-                             mpp_pe, mpp_root_pe, close_file,     &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
                              write_version_number, stdlog,        &
-                             uppercase, read_data, write_data,    &
-                             field_size, field_exist
+                             uppercase, NOTE
 
-use fms2_io_mod,            only:  file_exists
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
 
 use   mpp_domains_mod, only: domain2d
+use mpp_mod, only: input_nml_file
 
-use        fms_io_mod, only: register_restart_field, restart_file_type, &
-                             save_restart, restore_state, get_mosaic_tile_file
+!use        fms_io_mod, only: register_restart_field, restart_file_type, &
+!                             save_restart, restore_state, get_mosaic_tile_file
 
 use  aerosol_util_mod, only: do_moment_water, do_bulk_water
 
@@ -35,7 +39,7 @@ implicit none
 
 public :: mars_surface_init, mars_surface_end,  progts, sfc_snow, sfc_frost, &
          sfc_frost_mom, sfc_frost_blk, sfc_h2o2_chem, id_sfc_h2o2_chem, &
-         cumulative_prec_blk
+         cumulative_prec_blk, cumulative_prec_mconv
 
 !-----------------------------------------------------------------------
 !-------------------- namelist -----------------------------------------
@@ -52,20 +56,20 @@ real ::  soil_ti=     350.0             !  Nominal background value; mks units
 real ::  soil_alb=    0.25              !  Nominal background value; mks units
 real ::  soil_temp=   170.0             !  Isothermal soil temperature if no file is used
 
-real :: albedo_ice_np = 0.65             !  Northern CO2 ice albedo
+real :: albedo_ice_np = 0.65            !  Northern CO2 ice albedo
 real :: albedo_ice_sp = 0.43            !  Southern CO2 ice albedo
 real :: emiss_ice_np = 0.81             !  Northern CO2 ice emissivity
 real :: emiss_ice_sp = 0.88             !  Southern CO2 ice emissivity
 
-real :: alpha = 0.5                   !  parameter for surface temp calculation (0.5 = semi implicit, 0.0 = fully explicit, 1.0 = fully implicit)
+real :: alpha = 0.5                     !  parameter for surface temp calculation (0.5 = semi implicit, 0.0 = fully explicit, 1.0 = fully implicit)
 real :: albedo_h2o = 0.4                ! h2o ice albedo if do_waterice_albedo
-real :: albedo_h2o_liquid = 0.07        ! liquid water albedo
+real :: albedo_h2o_liquid = 0.07        ! h2o liquid albedo if do_waterice_albedo
 real :: emiss_h2o = 1.0                 ! h2o ice emissivity if do_waterice_albedo 
 
 logical :: do_co2_condensation= .true.  !  Maintain surface temperature at or above Tcrit
 
 logical :: do_subsfc_ice=   .true.      !  Include influence of subsurface water ice on thermal diffusivity
-real :: init_sfc_frost= 500.         !  Initial surface frost value (units?)
+real :: init_sfc_frost= 500.            !  Initial surface frost value [kg/m2]
 logical :: edit_subsfc_temp= .false.    !  change subsurface temperatures after initialization
 integer :: subsfc_ice_case = 7          !  subsurface ice distribution scenario
 logical :: use_legacy_soil = .false.    !  use legacy soil rho cp values
@@ -77,6 +81,7 @@ real ::  np_cap_lat = 65.0              !  latitude boundary for np_cap_ti
 real ::  np_cap_ti_max = 800.           !  Maximum np_cap_ti
 real ::  frost_threshold = 1.e6         !  The threshhold above which water frost influences surface albedo
 logical :: do_waterice_albedo= .false.  !  Activate change of albedo by water ice
+logical, public :: do_liquidwater_albedo = .false. ! Activate change of albedo by liquid water
 
 real  :: rho_ground= 1.50*1.0E3         !  Soil density:    kg / m**3
 real  :: cp_ground=  627.9              !  Soil heat capcity:     joules / kg / K
@@ -100,9 +105,10 @@ real, dimension(:,:),     allocatable, save  ::  sfc_albedo             !  map o
 real, dimension(:,:),     allocatable, save  ::  sfc_emiss              !  map of surface emissivity
 real, dimension(:,:),     allocatable, save  ::  sfc_snow               !  (CO2)
 real, dimension(:,:,:),     allocatable, save  ::  sfc_frost            !  (water)
-real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_mom      !  (water)
-real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_blk      !  (water)
+real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_mom        !  (water)
+real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_blk        !  (water)
 real, dimension(:,:,:),     allocatable, save  ::  cumulative_prec_blk  !  (cumulative precipitation bulk scheme)
+real, dimension(:,:,:),   allocatable, save  ::  cumulative_prec_mconv  !  (cumulative precipitation moist convection scheme)
 real, dimension(:,:),     allocatable, save  ::  sfc_h2o2_chem          !  (h2o2)
 real, dimension(:,:),     allocatable, save  ::  sfc_roughness          !  map of surface roughness
 real, dimension(:,:),     allocatable, save  ::  sfc_topo               !  map of surface topography
@@ -117,10 +123,6 @@ real, dimension(:,:,:),   allocatable, save  ::  soil_absorb
 #endif
 
 !--- for restart file
-type(restart_file_type), pointer, save :: Surf_restart => NULL()
-type(restart_file_type), pointer, save :: Til_restart => NULL()   !needed for tile restarts
-type(restart_file_type), pointer, save :: Surf_restart2 => NULL()
-type(restart_file_type), pointer, save :: Til_restart2 => NULL()   !needed for tile restarts
 logical                                :: in_different_file = .false.
 logical                                :: rst2 = .false. ! input restart has different nlayers
 
@@ -137,7 +139,7 @@ logical :: module_is_initialized = .false.
 integer, dimension(:),   allocatable, save  ::  id_frost_mom
 integer  :: id_sfc_h2o2_chem
 integer  ::  id_zgrid, id_subsfc, id_ts, id_thin, id_frost, id_frost_blk,id_snow, id_sflux
-integer  ::  id_alb, id_cprecip_blk
+integer  ::  id_alb, id_cprecip_blk, id_cprecip_mconv
 
 logical ::   mcpu0
 
@@ -152,7 +154,8 @@ namelist /surface_data_nml/  zoland, drag_cnst, soil_ti, soil_temp, &
                             nlayers,do_waterice_albedo,use_legacy_soil, &
                             alpha, albedo_h2o, emiss_h2o,nlay_rst,d2is, &
                             gk1,gk2,use_equilibrated_ts,            &
-                            init_sfc_frost,albedo_h2o_liquid
+                            init_sfc_frost,albedo_h2o_liquid,       &
+                            do_liquidwater_albedo
 
 contains
 
@@ -172,6 +175,8 @@ integer, intent(in) :: axes(4)
 type(time_type), intent(in) :: Time
     
 type(domain2d),      intent(inout) :: phys_domain
+type(FmsNetcdfDomainFile_t) :: Surf_restart
+type(FmsNetcdfDomainFile_t) :: Surf_restart2
 
 !           Default soil layer thickness:  meters
 real, dimension(13)  :: delzg_12 =                     &
@@ -180,7 +185,7 @@ real, dimension(13)  :: delzg_12 =                     &
                                            0.0400, 0.0800, 0.1600,  &
                                            0.3200, 0.640,  1.500, 3.50 /)
 
-character (len=128) :: filename, fieldname, tracer_name, tname, tracer_name2, f_rst
+character (len=128) :: filename, fieldname, tracer_name, tname, tracer_name2, f_tile
 
 integer  ::  unit, io, ierr, id, jd, i, j, k, is, js, ie, je
 integer  ::  im, jm, km, days, fld_dims(4), nt, ndx
@@ -189,19 +194,13 @@ logical  ::  used
 
 mcpu0=  (mpp_pe() == mpp_root_pe())
 
-!     ----- read namelist -----
-
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1; do while (ierr /= 0)
-        read  (unit, nml=surface_data_nml, iostat=io, end=10)
-        ierr = check_nml_error (io, 'surface_data_nml')
-    enddo
-10     call close_file (unit)
-endif
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=surface_data_nml, iostat=io)
+ierr = check_nml_error(io,'surface_data_nml')
 
 !     ----- write version info and namelist to log file -----
-
 call write_version_number (version,tagname)
 if (mpp_pe() == mpp_root_pe()) write (stdlog(),nml=surface_data_nml)
 
@@ -220,6 +219,7 @@ allocate (  sfc_frost      (id,jd,1)  )
 allocate (  sfc_frost_mom      (id,jd,nice_mass)  )
 allocate (  sfc_frost_blk  (id,jd,1)  )
 allocate (  cumulative_prec_blk  (id,jd,3)  )
+allocate (  cumulative_prec_mconv  (id,jd,3)  )
 allocate (  sfc_h2o2_chem  (id,jd)  )
 allocate (  sfc_roughness  (id,jd)  )
 allocate (  sfc_topo       (id,jd)  )
@@ -241,7 +241,7 @@ allocate (  soil_absorb     (id,jd,nlayers)  )
 !         Use this to obtain nlayers and subsurface temperatures
 
 filename= 'INPUT/soil_temp.res.nc'
-f_rst= 'INPUT/soil_temp.res.nc'
+f_tile= 'INPUT/soil_temp.res.tile1.nc'
 !new way of reading restarts
 rst2 = (nlay_rst /=0 .and. nlay_rst /= nlayers)
 if (rst2) then
@@ -250,13 +250,15 @@ if (rst2) then
     allocate(zgrid_r(nlay_rst+1))
 endif
 
-call mars_surface_register_restart('soil_temp.res.nc',phys_domain)
-
-if( file_exists( trim( filename ) ) ) then
+if( file_exists( trim( filename ) ) .or. file_exists( trim( f_tile ) )) then
+    if(mcpu0) print *, 'Reading surface restart files: ',trim(filename)
     
     if (rst2) then
-        call restore_state(Surf_restart2)
-        if (in_different_file) call restore_state(Til_restart2)  
+        if (open_file(Surf_restart2,filename,"read", phys_domain, is_restart=.true.)) then
+            call mars_surface_register_restart(Surf_restart2=Surf_restart2)
+            call read_restart(Surf_restart2)
+            call close_file(Surf_restart2)
+        endif
         km = min(nlayers,nlay_rst)
         tsoil(:,:,:km) = tsoil_r(:,:,:km)
         soil_icex(:,:,:km) = soil_icex_r(:,:,:km)
@@ -281,8 +283,12 @@ if( file_exists( trim( filename ) ) ) then
             zgrid(k)= zgrid(k-1) + delzg(k-1)
         enddo
     else
-        call restore_state(Surf_restart)
-        if (in_different_file) call restore_state(Til_restart)  
+
+        if (open_file(Surf_restart,filename,"read", phys_domain, is_restart=.true.)) then
+            call mars_surface_register_restart(Surf_restart=Surf_restart)
+            call read_restart(Surf_restart)
+            call close_file(Surf_restart)
+        endif
         DO k= 1, nlayers
             delzg(k)= zgrid(k+1)-zgrid(k)
         ENDDO
@@ -337,6 +343,7 @@ else
 
     sfc_snow(:,:)= 0.0
     cumulative_prec_blk(:,:,:)= 0.0
+    cumulative_prec_mconv(:,:,:)= 0.0
     do nt=1, nice_mass
         where( lat > 80.0*pi/180.0 )
             sfc_frost(:,:,1)= init_sfc_frost
@@ -399,14 +406,19 @@ id_frost = register_diag_field ( mod_name, 'frost',                &
                                 'Surface water ice for bulk microphysics', 'kg/m/m',    &
                                  missing_value=missing_value )
 
-id_frost_blk = register_diag_field ( mod_name, 'frost_blk',                &
+id_frost_blk = register_diag_field ( mod_name, 'frost_blk',       &
                                  (/axes(1:2)/), Time,             &
                                 'Surface water ice for new bulk microphysics', 'kg/m/m',    &
                                  missing_value=missing_value )
 
-id_cprecip_blk = register_diag_field ( mod_name, 'cprecip_blk',                &
+id_cprecip_blk = register_diag_field ( mod_name, 'cprecip_blk',   &
                                  (/axes(1:2)/), Time,             &
                                 'Cumulative precipitation bulk microphysics', 'kg/m/m',    &
+                                 missing_value=missing_value )
+
+id_cprecip_mconv = register_diag_field ( mod_name, 'cprecip_mconv',    &
+                                 (/axes(1:2)/), Time,             &
+                                'Cumulative precipitation mconv convection', 'kg/m/m',    &
                                  missing_value=missing_value )
 
 id_sfc_h2o2_chem = register_diag_field ( mod_name, 'sfc_h2o2_chem', &
@@ -631,7 +643,7 @@ if( (file_exists( trim( filename ) ))  ) then
     call read_sfc_field( nlon, mlat, lonb, latb, filename, fieldname, npcflag )
 #endif
     if(mcpu0) print *, 'Have read npcflag data file: '
-    if (.not. (file_exists( trim( f_rst ))) ) then
+    if (.not. (file_exists( trim( filename ))) ) then
 !!----reset the surface water ice to follow the npc flag file----!!
         do nt=1,nice_mass
             where (npcflag .gt. 0.5)
@@ -684,8 +696,9 @@ end subroutine mars_surface_init
 !-----------------------------------------------------------------------
 
 
-subroutine progts( is, js, dt, Time, lon, lat, ps,  phalf, dnflx, tgrnd, snowin, subday, tg_dt, &
-                     shflx, dsens_datmos, dsens_dsurf, evap, devap_datmos, devap_dsurf)
+subroutine progts( is, ie, js, je, kd, dt, Time, lon, lat, ps,  phalf, dnflx, tgrnd, snowin, subday, tg_dt, &
+                     shflx, dsens_datmos, dsens_dsurf, evap, devap_datmos, devap_dsurf, &
+                     latent_blk, dlatent_blk )
 !
 !  This is the main soil model prediction scheme
 !
@@ -705,7 +718,7 @@ subroutine progts( is, js, dt, Time, lon, lat, ps,  phalf, dnflx, tgrnd, snowin,
 !  hence sensible heat flux
 !      shflx(:,:)= -cpair*dragh(:)*( tsfc(:)-theta(:) )
 !
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, ie, je, kd
 
 !   is, ie and js, je are starting/stopping indices on the computational domain
 !    they range over the lat/lon points assigned to a particular processor;
@@ -717,28 +730,30 @@ integer, intent(in)  :: is, js
 
 real, intent(in)                        :: dt                   ! time step
 type(time_type), intent(in)             :: Time                 ! model time
-real, intent(in),    dimension(:,:)     :: lon                  ! longitude array [rad]
-real, intent(in),    dimension(:,:)     :: lat                  ! latitude array [rad]
+real, intent(in),    dimension(is:ie,js:je)     :: lon                  ! longitude array [rad]
+real, intent(in),    dimension(is:ie,js:je)     :: lat                  ! latitude array [rad]
 
-real, intent(in), dimension(:,:)        ::  dnflx               ! downwelling radiation at surface [W/m^2]
-real, intent(in), dimension(:,:)        ::  ps                  ! surface pressure [Pa]
-real, intent(in), dimension(:,:,:)      ::  phalf               ! layer boundary pressures [Pa]
+real, intent(in), dimension(is:ie,js:je)        ::  dnflx               ! downwelling radiation at surface [W/m^2]
+real, intent(in), dimension(is:ie,js:je)        ::  ps                  ! surface pressure [Pa]
+real, intent(in), dimension(is:ie,js:je,kd+1)      ::  phalf               ! layer boundary pressures [Pa]
 
-real, intent(in), dimension(:,:,:)      ::  tgrnd               ! soil temperatures [K]
-real, intent(in), dimension(:,:)        ::  snowin              ! initial CO2 ice on ground [kg/m^2]
-real, intent(out), dimension(:,:)       ::  subday              ! CO2 sublimation/condensation [kg/m^2]
-real, intent(out), dimension(:,:,:)     ::  tg_dt               ! soil temperature tendency [K/s]
-real, intent(in), dimension(:,:)        ::  shflx               ! sensible heat flux [W/m^2]
-real, intent(in), dimension(:,:)        ::  dsens_datmos, &     ! derivative of heat flux wrt atmosphere temperature
+real, intent(in), dimension(is:ie,js:je,nlayers)      ::  tgrnd               ! soil temperatures [K]
+real, intent(in), dimension(is:ie,js:je)        ::  snowin              ! initial CO2 ice on ground [kg/m^2]
+real, intent(out), dimension(is:ie,js:je)       ::  subday              ! CO2 sublimation/condensation [kg/m^2]
+real, intent(out), dimension(is:ie,js:je,nlayers)     ::  tg_dt               ! soil temperature tendency [K/s]
+real, intent(in), dimension(is:ie,js:je)        ::  shflx               ! sensible heat flux [W/m^2]
+real, intent(in), dimension(is:ie,js:je)        ::  dsens_datmos, &     ! derivative of heat flux wrt atmosphere temperature
                                             dsens_dsurf         ! derivative of heat flux wrt surface temperature
 
-real, intent(in), dimension(:,:)        ::  evap                ! evaporative latent heat flux [W/m^2]
-real, intent(in), dimension(:,:)        ::  devap_datmos, &     ! derivative of heat flux wrt atmosphere temperature
+real, intent(in), dimension(is:ie,js:je)        ::  evap                ! evaporative latent heat flux [W/m^2]
+real, intent(in), dimension(is:ie,js:je)        ::  devap_datmos, &     ! derivative of heat flux wrt atmosphere temperature
                                             devap_dsurf         ! derivative of heat flux wrt surface temperature
+real, intent(in), dimension(is:ie,js:je)        ::  latent_blk, &       ! latent heat bulk scheme [W/m^2]
+                                            dlatent_blk         ! derivative of latent heat bulk scheme
 
 !  --------Local -----------------
 logical  :: used
-integer  ::  ie, je, id, jd, i, j, k, nlay, kk
+integer  :: id, jd, i, j, k, nlay, kk
 
 real, dimension(0:size(tgrnd,3)-1) :: adelz, bdelz, cdelz
 real, dimension(0:size(tgrnd,3)  ) :: gkz
@@ -774,8 +789,6 @@ k = size(phalf,3)
 delp(:,:)=phalf(:,:,k)-phalf(:,:,k-1)
 
 id= size(ps,1);    jd= size(ps,2)
-
-ie= is + id - 1;   je= js + jd - 1
 
 
 delt= dt
@@ -936,14 +949,14 @@ else
 endif
 coszen(:,:)= 0.0
 if (do_moment_water) then
-    call albedo_calc( is, js, lon, lat, &
-                coszen, tsfc, ps, snowin, frost_mom, albedo, emiss )
+    call albedo_calc( is, js, id, jd, lon, lat, &
+                coszen, tsfc, ps, snowin, frost_mom, albedo, emiss, do_liquidwater_albedo )
 elseif (do_bulk_water) then
-    call albedo_calc( is, js, lon, lat, &
-                coszen, tsfc, ps, snowin, frost_blk, albedo, emiss )
+    call albedo_calc( is, js, id, jd, lon, lat, &
+                coszen, tsfc, ps, snowin, frost_blk, albedo, emiss, do_liquidwater_albedo )
 else
-    call albedo_calc( is, js, lon, lat, &
-                coszen, tsfc, ps, snowin, frost, albedo, emiss )
+    call albedo_calc( is, js, id, jd, lon, lat, &
+                coszen, tsfc, ps, snowin, frost, albedo, emiss, do_liquidwater_albedo )
 endif
 
 asav=adiag
@@ -971,8 +984,8 @@ do k=1,nlay
 enddo
 
 
-irflx(:,:)= STEFAN*emiss(:,:)*tsfc(:,:)**4
-nonlatent_flux = dnflx  + shflx  - irflx
+irflx(:,:)= STEFAN*emiss(:,:)*tsfc(:,:)**4 
+nonlatent_flux = dnflx  + shflx  - irflx + latent_blk + dlatent_blk
 
 
 !  Add latent heat term to implicit equation
@@ -1143,36 +1156,35 @@ end function icedepth
 !--------------------------------------------------------
 !--------------------------------------------------------
 
-subroutine albedo_calc( is, js, lon, lat,  cosz, &
-                         ts, ps, snow, frost, albedo, emiss_sfc )
+subroutine albedo_calc( is, js, id, jd, lon, lat,  cosz, &
+                         ts, ps, snow, frost, albedo, emiss_sfc , liquidwat)
 !
 !   calculate the effect of ice onsurface albedo 
 !       In principal, albedo can be wavelength and zenith-angle dependent
 !       Would need to distinguish between direct and diffuse solar radiation
 !
 !
-integer, intent(in)                  :: is, js
-real, intent(in), dimension(:,:)     :: lon
-real, intent(in), dimension(:,:)     :: lat
-real, intent(in), dimension(:,:)     :: cosz       !
-real, intent(in), dimension(:,:)     :: ts         !
-real, intent(in), dimension(:,:)     :: ps         !
-real, intent(in), dimension(:,:)     :: snow
-real, intent(in), dimension(:,:)     :: frost
+integer, intent(in)                  :: is, js, id, jd
+real, intent(in), dimension(id,jd)     :: lon
+real, intent(in), dimension(id,jd)     :: lat
+real, intent(in), dimension(id,jd)     :: cosz       !
+real, intent(in), dimension(id,jd)     :: ts         !
+real, intent(in), dimension(id,jd)     :: ps         !
+real, intent(in), dimension(id,jd)     :: snow
+real, intent(in), dimension(id,jd)     :: frost
 
-real, intent(out), dimension(:,:)    :: albedo     !
-real, intent(out), dimension(:,:)    :: emiss_sfc  !
+real, intent(out), dimension(id,jd)    :: albedo     !
+real, intent(out), dimension(id,jd)    :: emiss_sfc  !
+logical, intent (in)                   :: liquidwat
 
 
 ! Local variables
 
 logical  :: used
-integer  ::  ie, je, id, jd
+integer  ::  ie, je
 real     ::  snow_threshold
 
 real,   dimension(size(lat,1),size(lat,2)) :: albedo_ice, emiss_ice
-
-id= size(ps,1);     jd= size(ps,2)
 
 ie= is + id - 1;    je= js + jd - 1
 
@@ -1202,14 +1214,21 @@ end where
 !      include an albedo dependence on frost;
 !            frost_threshhold (via namelist) in m
 !              frost (kg/m**2) ;  hence the 1000.0 conversion
-where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. .and. ts .lt. 273.)
-    albedo = albedo_h2o
-    emiss_sfc = emiss_h2o
-else where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. .and. ts .ge. 273.)
-    albedo = albedo_h2o_liquid
-    emiss_sfc = emiss_h2o
-end where
 
+if ( liquidwat ) then
+    where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. .and. ts .lt. 273.)
+        albedo = albedo_h2o
+        emiss_sfc = emiss_h2o
+    else where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. .and. ts .ge. 273.)
+        albedo = albedo_h2o_liquid
+        emiss_sfc = emiss_h2o
+    end where
+else
+    where ( frost > frost_threshold * 1.0e3 .and. snow .le. 0. )
+        albedo = albedo_h2o
+        emiss_sfc = emiss_h2o
+    end where
+endif
 
 end  subroutine albedo_calc
 
@@ -1238,6 +1257,7 @@ character(len=128), intent(in)    :: filename, field_name
 real,               intent(out)   :: sfc_field(is:ie, js:je)
 
 type(fv_grid_bounds_type) :: bd2
+type(FmsNetcdfFile_t) :: fileobj
 
 !        local
 real                :: phis(isd:ied, jsd:jed)
@@ -1245,7 +1265,7 @@ real                :: phis(isd:ied, jsd:jed)
 real*4, allocatable :: htopo(:,:)
 real,   allocatable :: rtopo(:,:)
 real,   allocatable :: lon1(:),  lat1(:)
-integer             :: nlon, nlat, i, j, n, nstr,  fld_dims(4)
+integer             :: nlon, nlat, i, j, n, nstr,  fld_dims(2)
 real                :: dx1, dy1
 
 character(len=128)  :: tilefile
@@ -1279,66 +1299,69 @@ if ( npx > 0 ) then
     tilefile= filename(1:nstr-2) //  'tile1.nc'
 
     !        If tiled surface input fields are present, check these.
-    if( file_exists( trim(tilefile) ) ) then
+    if( open_file(fileobj, trim(tilefile), 'read')) then
 
-        call field_size( trim(tilefile), trim(field_name), fld_dims )
+        call get_variable_size( fileobj, trim(field_name), fld_dims )
         nlon= fld_dims(1);  nlat= fld_dims(2);
 
         if(mcpu0) print *, 'Reading tileX.nc:, ', nlon, nlat
 
         if( nlon==npx-1 .and.  nlat==npy-1 )  then
-            call read_data(trim(filename), trim(field_name),  sfc_field )
+            call read_data(fileobj, trim(field_name),  sfc_field )
             if(mcpu0) print *, 'Have read surface data ', trim(field_name), ' from tiled files: '
             return
         else
             call error_mesg ('mars_surface','tiled input surface field is the wrong dimension', FATAL)
         endif
+        call close_file(fileobj)
     endif
 
     !         Otherwise, will need to interpolate hi-res surface field data to cube domains
     !
-    call field_size( trim(filename), trim(field_name), fld_dims )
+    if( open_file(fileobj, trim(filename), 'read')) then
+        call get_variable_size( fileobj, trim(field_name), fld_dims )
 
-    nlon= fld_dims(1);  nlat= fld_dims(2);
+        nlon= fld_dims(1);  nlat= fld_dims(2);
 
-    if(mcpu0) write(*,*) trim(filename), '  Mars Hi-RES dataset dims=', nlon, nlat
+        if(mcpu0) write(*,*) trim(filename), '  Mars Hi-RES dataset dims=', nlon, nlat
 
-    allocate ( htopo(nlon,nlat) )
-    allocate ( rtopo(nlon,nlat) )
+        allocate ( htopo(nlon,nlat) )
+        allocate ( rtopo(nlon,nlat) )
 
-    if(mcpu0) write(*,*) trim(filename),' ', trim(field_name),'  Read data topo'
-    call read_data( trim(filename), trim(field_name), rtopo, no_domain=.true. )
-    if(mcpu0) write(*,*) trim(filename),' ', trim(field_name),'  data topo OK'
+        if(mcpu0) write(*,*) trim(filename),' ', trim(field_name),'  Read data topo'
+        call read_data( fileobj, trim(field_name), rtopo )
+        if(mcpu0) write(*,*) trim(filename),' ', trim(field_name),'  data topo OK'
 
-    !          This is needed because htopo is declared as real*4
-    htopo= rtopo
+        !          This is needed because htopo is declared as real*4
+        htopo= rtopo
 
-    allocate ( lat1(nlat+1) )
-    allocate ( lon1(nlon+1) )
+        allocate ( lat1(nlat+1) )
+        allocate ( lon1(nlon+1) )
 
-    if( field_exist(  trim(filename), 'lonb') ) then
-        call read_data( trim(filename), 'lonb', lon1, no_domain=.true. )
-        lon1(:)= lon1(:)*PI/180.0
-    else
-        dx1 = 2.*pi/real(nlon)
-        do i=1,nlon+1
-            lon1(i) = dx1 * (i-1)
-        enddo
+        if( variable_exists(  fileobj, 'lonb') ) then
+            call read_data( fileobj, 'lonb', lon1 )
+            lon1(:)= lon1(:)*PI/180.0
+        else
+            dx1 = 2.*pi/real(nlon)
+            do i=1,nlon+1
+                lon1(i) = dx1 * (i-1)
+            enddo
+        endif
+
+        if( variable_exists(  fileobj, 'latb') ) then
+            call read_data( fileobj, 'latb', lat1 )
+            lat1(:)= lat1(:)*PI/180.0
+        else
+            dy1 = pi/real(nlat)
+            lat1(1) = - 0.5*pi
+            lat1(nlat+1) =  0.5*pi
+            do j=2,nlat
+                lat1(j) = -0.5*pi + dy1*(j-1)
+            enddo
+        endif
+        if(mcpu0) write(*,*) 'latb lonb ok'
+        call close_file(fileobj)
     endif
-
-    if( field_exist(  trim(filename), 'latb') ) then
-        call read_data( trim(filename), 'latb', lat1, no_domain=.true. )
-        lat1(:)= lat1(:)*PI/180.0
-    else
-        dy1 = pi/real(nlat)
-        lat1(1) = - 0.5*pi
-        lat1(nlat+1) =  0.5*pi
-        do j=2,nlat
-            lat1(j) = -0.5*pi + dy1*(j-1)
-        enddo
-    endif
-    if(mcpu0) write(*,*) 'latb lonb ok'
-
 
     call map_to_cubed_simple( nlon, nlat, lat1, lon1, htopo, grid, agrid,  &
                        phis, npx, npy, npx_global, bd2 )
@@ -1377,6 +1400,7 @@ character(len=128), intent(in)    :: filename, field_name
 real,               intent(out)   :: sfc_field(:,:)
 
 
+type(FmsNetcdfFile_t) :: fileobj
 real,   allocatable ::  rtopo(:,:)
 real,   allocatable ::  lon1(:),  lat1(:)
 real                ::  dx1, dy1
@@ -1384,64 +1408,67 @@ integer             ::  nlon, nlat, i, j, n, id, jd, fld_dims(4)
 
 
 id= size(blon,1)-1; jd= size(blat,2)-1
+if( open_file(fileobj, trim(filename), 'read')) then
 
-call field_size( trim(filename), trim(field_name), fld_dims )
+    call get_variable_size( fileobj, trim(field_name), fld_dims )
 
-nlon= fld_dims(1);  nlat= fld_dims(2);
+    nlon= fld_dims(1);  nlat= fld_dims(2);
 
-if(mcpu0) write(*,*) trim(filename),  ':  Input dataset dims=', nlon, nlat
+    if(mcpu0) write(*,*) trim(filename),  ':  Input dataset dims=', nlon, nlat
 
-if( nlon==im   .and. nlat==jm ) then
+    if( nlon==im   .and. nlat==jm ) then
 
-    if(mcpu0) write(*,*) '   --->  ', trim(field_name),  '  Field sizes match:  no interpolation necessary '
-    call read_data( trim(filename), trim(field_name), sfc_field )
+        if(mcpu0) write(*,*) '   --->  ', trim(field_name),  '  Field sizes match:  no interpolation necessary '
+        call read_data( fileobj, trim(field_name), sfc_field )
 
-else   !     will need to interpolate input surface data field to the required lat/lon grid
-!          The input file contains lat and lon arrays; however we
-!      need the bounding latitude and longitudes: So inquire
-!      about their presence; else use equi-spaced 'default' values
+    else   !     will need to interpolate input surface data field to the required lat/lon grid
+    !          The input file contains lat and lon arrays; however we
+    !      need the bounding latitude and longitudes: So inquire
+    !      about their presence; else use equi-spaced 'default' values
 
-    allocate ( rtopo(nlon,nlat) )
-    allocate ( lat1(nlat+1) )
-    allocate ( lon1(nlon+1) )
+        allocate ( rtopo(nlon,nlat) )
+        allocate ( lat1(nlat+1) )
+        allocate ( lon1(nlon+1) )
 
-    call read_data( trim(filename), trim(field_name), rtopo, no_domain=.true. )
+        call read_data( fileobj, trim(field_name), rtopo )
 
 
-    if( field_exist(  trim(filename), 'lonb') ) then
-        call read_data( trim(filename), 'lonb', lon1, no_domain=.true. )
-        lon1(:)= lon1(:)*PI/180.0
-    elseif ( nlon == id ) then
-        if(mcpu0) write(*,*) trim(field_name),  ':  Input lon dims= requested lon dims', nlon, id
-        lon1(:)= blon(:,1)
-    else
-        dx1 = 2.*pi/real(nlon)
-        do i=1,nlon+1
-            lon1(i) = dx1 * (i-1)
-        enddo
+        if( variable_exists(  fileobj, 'lonb') ) then
+            call read_data( fileobj, 'lonb', lon1 )
+            lon1(:)= lon1(:)*PI/180.0
+        elseif ( nlon == id ) then
+            if(mcpu0) write(*,*) trim(field_name),  ':  Input lon dims= requested lon dims', nlon, id
+            lon1(:)= blon(:,1)
+        else
+            dx1 = 2.*pi/real(nlon)
+            do i=1,nlon+1
+                lon1(i) = dx1 * (i-1)
+            enddo
+        endif
+
+        if( variable_exists(  fileobj, 'latb') ) then
+            call read_data( fileobj, 'latb', lat1 )
+            lat1(:)= lat1(:)*PI/180.0
+        elseif ( nlat == jd ) then
+            if(mcpu0) write(*,*) trim(field_name),  ':  Input lat dims= requested lon dims', nlon, id
+            lat1(:)= blat(:,1)
+        else
+            dy1 = pi/real(nlat)
+            lat1(1) = - 0.5*pi
+            lat1(nlat+1) =  0.5*pi
+            do j=2,nlat
+                lat1(j) = -0.5*pi + dy1*(j-1)
+            enddo
+        endif
+
+        call horiz_interp ( rtopo, lon1, lat1, blon, blat, sfc_field, interp_method= 'conservative' )
+
+
+        deallocate ( rtopo )
+        deallocate ( lat1, lon1 )
+
     endif
-
-    if( field_exist(  trim(filename), 'latb') ) then
-        call read_data( trim(filename), 'latb', lat1, no_domain=.true. )
-        lat1(:)= lat1(:)*PI/180.0
-    elseif ( nlat == jd ) then
-        if(mcpu0) write(*,*) trim(field_name),  ':  Input lat dims= requested lon dims', nlon, id
-        lat1(:)= blat(:,1)
-    else
-        dy1 = pi/real(nlat)
-        lat1(1) = - 0.5*pi
-        lat1(nlat+1) =  0.5*pi
-        do j=2,nlat
-            lat1(j) = -0.5*pi + dy1*(j-1)
-        enddo
-    endif
-
-    call horiz_interp ( rtopo, lon1, lat1, blon, blat, sfc_field, interp_method= 'conservative' )
-
-
-    deallocate ( rtopo )
-    deallocate ( lat1, lon1 )
-
+    call close_file(fileobj)
 endif
 
 
@@ -1450,67 +1477,84 @@ end subroutine read_sfc_field
 !--------------------------------------------------------
 !--------------------------------------------------------
 
-subroutine mars_surface_register_restart(fname,phys_domain)
+subroutine mars_surface_register_restart(Surf_restart, Surf_restart2)
 ! register restart field to be written to restart file.
-character(len=*),                 intent(in) :: fname
-character(len=64)                            :: fname2
-type(domain2d),                intent(inout) :: phys_domain
+type(FmsNetcdfDomainFile_t),   intent(inout), optional :: Surf_restart, Surf_restart2
+character(len=8), dimension(3)               ::  dim_names_3d  !< String array of dimension names
+character(len=8), dimension(4)               ::  dim_names_4d  !< String array of dimension names
+character(len=8), dimension(4)               ::  dim_names_blk  !< String array of dimension names
 integer :: id_restart, n, ndx
 character (len=128) :: tracer_name
 
 
-call get_mosaic_tile_file(fname, fname2, is_no_domain=.false., domain=phys_domain )
+dim_names_3d(1) = "xaxis_1"
+dim_names_3d(2) = "yaxis_1"
+dim_names_3d(3) = "Time"
 
-!default restart file: read/write definition
-allocate(Surf_restart)
-if(trim(fname2) == trim(fname)) then
-    Til_restart => Surf_restart
-    in_different_file = .false.
-else
-    in_different_file = .true.
-    allocate(Til_restart)
-endif
+dim_names_4d(1) = "xaxis_1"
+dim_names_4d(2) = "yaxis_1"
+dim_names_4d(3) = "zaxis_1"
+dim_names_4d(4) = "Time"
 
-id_restart = register_restart_field(Til_restart, fname, 'snow', sfc_snow, domain=phys_domain,mandatory=.false.)
-id_restart = register_restart_field(Til_restart, fname, 'frost', sfc_frost, domain=phys_domain,mandatory=.false.)
-id_restart = register_restart_field(Til_restart, fname, 'frost_blk', sfc_frost_blk, domain=phys_domain,mandatory=.false.)
-id_restart = register_restart_field(Til_restart, fname, 'cprecip_blk', cumulative_prec_blk, domain=phys_domain,mandatory=.false.)
-!id_restart = register_restart_field(Til_restart, fname, 'cprecip_mconv', cumulative_prec_mconv, domain=phys_domain,mandatory=.false.)
+dim_names_blk(1) = "xaxis_1"
+dim_names_blk(2) = "yaxis_1"
+dim_names_blk(3) = "blk_spec"
+dim_names_blk(4) = "Time"
 
-do n=1,nice_mass
-    ndx= ice_mass_indx(n)
-    call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)
-    id_restart = register_restart_field(Til_restart, fname, trim(tracer_name), sfc_frost_mom(:,:,n), domain=phys_domain,mandatory=.false.)
-end do
+if (PRESENT(Surf_restart)) then
+    call register_axis(Surf_restart, dim_names_3d(1), "x")
+    call register_axis(Surf_restart, dim_names_3d(2), "y")
+    if (.not. Surf_restart%mode_is_append) call register_axis(Surf_restart, "Time", unlimited)
+    call register_axis(Surf_restart, dim_names_4d(3), size(tsoil,dim=3))
+    call register_axis(Surf_restart, dim_names_blk(3), size(cumulative_prec_blk,dim=3))
+!< Register the domain decomposed dimensions as variables so that the combiner can work
+!! correctly
+    call register_field(Surf_restart, dim_names_4d(1), "double", (/dim_names_4d(1)/))
+    call register_field(Surf_restart, dim_names_4d(2), "double", (/dim_names_4d(2)/))
+    call register_field(Surf_restart, dim_names_4d(3), "double", (/dim_names_4d(3)/))
 
-id_restart = register_restart_field(Til_restart, fname, 'tg', tsoil, domain=phys_domain,mandatory=.false.)
-id_restart = register_restart_field(Til_restart, fname, 'soil_ice', soil_icex, domain=phys_domain,mandatory=.false.)
-id_restart = register_restart_field(Surf_restart, fname, 'zgrid', zgrid, no_domain = .true.,mandatory=.false.)
-
-! if the restart file used a different soil layer structure. read only
-if (rst2) then
-    allocate(Surf_restart2)
-    if(trim(fname2) == trim(fname)) then
-        Til_restart2 => Surf_restart2
-    else
-        allocate(Til_restart2)
-    endif
-
-    id_restart = register_restart_field(Til_restart2, fname, 'snow', sfc_snow, domain=phys_domain,mandatory=.false.)
-    id_restart = register_restart_field(Til_restart2, fname, 'frost', sfc_frost, domain=phys_domain,mandatory=.false.)
-    id_restart = register_restart_field(Til_restart2, fname, 'frost_blk', sfc_frost_blk, domain=phys_domain,mandatory=.false.)
-    id_restart = register_restart_field(Til_restart2, fname, 'cprecip_blk', cumulative_prec_blk, domain=phys_domain,mandatory=.false.)
+    call register_restart_field(Surf_restart, 'snow', sfc_snow, dim_names_3d, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'frost', sfc_frost(:,:,1), dim_names_3d, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'frost_blk', sfc_frost_blk(:,:,1), dim_names_3d, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'cprecip_blk', cumulative_prec_blk, dim_names_blk, is_optional=.true.)
 
     do n=1,nice_mass
         ndx= ice_mass_indx(n)
         call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)
-        id_restart = register_restart_field(Til_restart2, fname, trim(tracer_name), sfc_frost_mom(:,:,n), domain=phys_domain,mandatory=.false.)
+        call register_restart_field(Surf_restart, trim(tracer_name), sfc_frost_mom(:,:,n), dim_names_3d, is_optional=.true.)
     end do
 
-    id_restart = register_restart_field(Til_restart2, fname, 'tg', tsoil_r, domain=phys_domain,mandatory=.false.)
-    id_restart = register_restart_field(Til_restart2, fname, 'soil_ice', soil_icex_r, domain=phys_domain,mandatory=.false.)
-    id_restart = register_restart_field(Surf_restart2, fname, 'zgrid', zgrid_r, no_domain = .true.,mandatory=.false.)
+    call register_restart_field(Surf_restart, 'tg', tsoil, dim_names_4d, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'soil_ice', soil_icex, dim_names_4d, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'zgrid', zgrid, (/dim_names_4d(3)/), is_optional=.true.)
+endif
+! if the restart file used a different soil layer structure. read only
+if (rst2 .and. PRESENT (Surf_restart2)) then
+    call register_axis(Surf_restart2, dim_names_3d(1), "x")
+    call register_axis(Surf_restart2, dim_names_3d(2), "y")
+    if (.not. Surf_restart%mode_is_append) call register_axis(Surf_restart2, "Time", unlimited)
+    call register_axis(Surf_restart2, dim_names_4d(3), nlay_rst)
 
+    !< Register the domain decomposed dimensions as variables so that the combiner can work
+    !! correctly
+    call register_field(Surf_restart2, dim_names_4d(1), "double", (/dim_names_4d(1)/))
+    call register_field(Surf_restart2, dim_names_4d(2), "double", (/dim_names_4d(2)/))
+    call register_field(Surf_restart2, dim_names_4d(3), "double", (/dim_names_4d(3)/))
+
+    call register_restart_field(Surf_restart2, 'snow', sfc_snow, dim_names_3d, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'frost', sfc_frost(:,:,1), dim_names_3d, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'frost_blk', sfc_frost_blk(:,:,1), dim_names_3d, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'cprecip_blk', cumulative_prec_blk, dim_names_blk, is_optional=.true.)
+
+    do n=1,nice_mass
+        ndx= ice_mass_indx(n)
+        call get_tracer_names(MODEL_ATMOS, ndx, tracer_name)
+        call register_restart_field(Surf_restart2, trim(tracer_name), sfc_frost_mom(:,:,n), dim_names_3d, is_optional=.true.)
+    end do
+
+    call register_restart_field(Surf_restart2, 'tg', tsoil_r, dim_names_4d, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'soil_ice', soil_icex_r, dim_names_4d, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'zgrid', zgrid_r, (/dim_names_4d(3)/), is_optional=.true.)
 endif
 
 
@@ -1519,14 +1563,52 @@ end subroutine mars_surface_register_restart
 !--------------------------------------------------------
 !--------------------------------------------------------
 
+subroutine mars_surface_restart(phys_domain)
 
-subroutine mars_surface_end( days  )
+type(domain2d),      intent(inout) :: phys_domain
+type(FmsNetcdfDomainFile_t) ::  Surf_restart, Surf_restart2 !< Fms2io domain decomposed fileobj
+character(len=128) :: filename !< Restart filename
+
+filename = "RESTART/soil_temp.res.nc"
+if (open_file(Surf_restart,trim(filename),"overwrite", phys_domain, is_restart=.true.)) then
+    call mars_surface_register_restart(Surf_restart, Surf_restart2)
+    call write_restart(Surf_restart)
+    call add_domain_dims(Surf_restart)
+    call close_file(Surf_restart)
+endif
+
+
+end subroutine mars_surface_restart
+
+!--------------------------------------------------------
+!--------------------------------------------------------
+!< Add_dimension_data: Adds dummy data for the domain decomposed axis
+subroutine add_domain_dims(Surf_restart)
+type(FmsNetcdfDomainFile_t) :: Surf_restart !< Fms2io domain decomposed fileobj
+integer, dimension(:), allocatable :: buffer !< Buffer with axis data
+integer :: is, ie !< Starting and Ending indices for data
+
+call get_global_io_domain_indices(Surf_restart, "xaxis_1", is, ie, indices=buffer)
+call write_data(Surf_restart, "xaxis_1", buffer)
+deallocate(buffer)
+
+call get_global_io_domain_indices(Surf_restart, "yaxis_1", is, ie, indices=buffer)
+call write_data(Surf_restart, "yaxis_1", buffer)
+deallocate(buffer)
+
+end subroutine add_domain_dims
+!--------------------------------------------------------
+!--------------------------------------------------------
+
+
+subroutine mars_surface_end( phys_domain, days  )
 ! end mars surface
+use fv_mars_interface_mod,  only: nested
 
+type(domain2d),      intent(inout) :: phys_domain
 integer,             intent(in) :: days
 !new way to save restart files
-call save_restart(Surf_restart)
-if(in_different_file) call save_restart(Til_restart)
+call mars_surface_restart(phys_domain)
 
 deallocate (  tsoil            )
 deallocate (  t_surf           )

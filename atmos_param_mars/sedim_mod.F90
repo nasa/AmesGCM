@@ -2,12 +2,20 @@ module sedim_mod
 !  module to calculate moment tracer sedimentation	
 use constants_mod, only: grav,cp_air,rdgas,pi
 use initracer_mod
-use fms_mod, only: error_mesg, FATAL,                      &
-       open_namelist_file, check_nml_error,                &
-       mpp_pe, mpp_root_pe, close_file,                    &
-       write_version_number, stdlog,                       &
-       uppercase, read_data, write_data, field_size
-use fms2_io_mod,            only:  file_exists
+
+use         mpp_mod, only: input_nml_file
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
 use time_manager_mod, only: time_type, get_time
 use diag_manager_mod, only: register_diag_field, send_data,  diag_axis_init
 use dust_update_mod, only: sfc_dust_mass
@@ -36,7 +44,7 @@ contains
 !=====================================================================
 !=====================================================================
 
-subroutine sedim_driver(is,js,Time,p_half,p_full,t,tdt, &
+subroutine sedim_driver(is,js,ie,je,kk,ntp,Time,p_half,p_full,t,tdt, &
      r,rdt,tg,dtime,kd,rdt_sedim,lifting_dust,checkcons)
      !
 ! Calls init_sedim and sedim to perform aerosol sedimentation and output 
@@ -59,32 +67,32 @@ implicit none
 !===============================================================
 !     Input Arguments 
 !===============================================================
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, ie, je, kk, ntp
 type(time_type), intent(in)             :: Time
-real*8, intent(in), dimension(:,:,:) :: p_half
-real*8, intent(in), dimension(:,:,:) :: p_full
-real*8, intent(in), dimension(:,:,:) :: t
-real*8, intent(in), dimension(:,:,:,:) :: r
+real*8, intent(in), dimension(is:ie,js:je,kk+1) :: p_half
+real*8, intent(in), dimension(is:ie,js:je,kk) :: p_full
+real*8, intent(in), dimension(is:ie,js:je,kk) :: t
+real*8, intent(in), dimension(is:ie,js:je,kk,ntp) :: r
 
 
-real*8, intent(in), dimension(:,:) :: tg      !     Ground Temperature (K)
+real*8, intent(in), dimension(is:ie,js:je) :: tg      !     Ground Temperature (K)
 
 real*8, intent(in) :: dtime                   !     NDT time step
-real*8, intent(in), dimension(:,:,:) :: kd    !     PBL Eddy coefficient for sedimentation (set to 0 for now)
+real*8, intent(in), dimension(is:ie,js:je,2*kk+1) :: kd    !     PBL Eddy coefficient for sedimentation (set to 0 for now)
 
-real*8, intent(in), dimension(:,:,:,:) :: rdt !     tracer tendencies (kg/kg/s)
-real*8, intent(in), dimension(:,:,:) :: tdt   !     Temperature tendencies (K/s)
+real*8, intent(in), dimension(is:ie,js:je,kk,ntp) :: rdt !     tracer tendencies (kg/kg/s)
+real*8, intent(in), dimension(is:ie,js:je,kk) :: tdt   !     Temperature tendencies (K/s)
 logical, intent(in), dimension(size(r,1),size(r,2),size(r,4)) :: lifting_dust         ! flag is true where lifting occurs
 logical, intent(in) :: checkcons
 !===============================================================
 !     Output Arguments
 !===============================================================
-real*8, intent(out), dimension(:,:,:,:) :: rdt_sedim
+real*8, intent(out), dimension(is:ie,js:je,kk,ntp) :: rdt_sedim
 !===============================================================
 !===============================================================
 !     Local Variables To Microphys
 integer n, nt, ndx 
-integer  :: ie, je, id, jd, i, j, k, l,ilay 
+integer  :: id, jd, i, j, k, l,ilay 
 integer, dimension(ntrace_mom) :: sedimflag ! active or desactive sedimentation
 logical :: used
 !     Number of layer midpoints
@@ -116,8 +124,6 @@ real*8, dimension(size(t,1),size(t,2),size(t,3),ntrace_mom) :: dens,Rcor
 ! *******************************************************************************     
 mcpu0 = (mpp_pe() == mpp_root_pe())
 id= size(tl,1); jd= size(tl,2) 
-ie= is + id - 1
-je= js + jd - 1
 ! Original Vertical Levels
 nz = size(t,3)
 
@@ -745,19 +751,12 @@ jd= size(lat,2)
 ie= is + id - 1
 je= js + jd - 1
 
-! *********************************************************
-!     ----- read namelist /_nml/   -----
-! *********************************************************
 
-if (file_exists('input.nml')) then
-    unit = open_namelist_file ( )
-    ierr=1; do while (ierr /= 0)
-        read  (unit, nml=sedim_nml, iostat=io, end=10)
-        ierr = check_nml_error (io, 'sedim_nml')
-    enddo
-10     call close_file (unit)
-endif
-
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
+read (input_nml_file, nml=sedim_nml, iostat=io)
+ierr = check_nml_error(io,'sedim_nml')
 if (mpp_pe() == mpp_root_pe()) write (stdlog(),nml=sedim_nml)
 
 ! *********************************************************

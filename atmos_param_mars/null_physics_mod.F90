@@ -7,6 +7,7 @@ module null_physics_mod
 use fms_mod, only: error_mesg, FATAL
 use time_manager_mod, only: time_type
 use   mpp_domains_mod, only: domain2d
+use   mpp_mod, only: input_nml_file
 
 implicit none
 private
@@ -193,10 +194,10 @@ end subroutine palmer_drag_end
 ! *****************************************************************     
 ! *****************************************************************
 
-subroutine cloud_physics(is, js, lon, lat, dt, Time, &
+subroutine cloud_physics(is, js, ie, je, kd, ntrace, lon, lat, dt, Time, &
                          p_half, p_full, tsfc, frost, t, r, rdt, drag_q)
 
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, ie, je, kd, ntrace
 real,    intent(in)  :: dt
 type(time_type), intent(in)             :: Time
 real, intent(in),    dimension(:,:)     :: lon
@@ -365,13 +366,13 @@ end subroutine topo_drag_end
 ! *****************************************************************     
 ! *****************************************************************
 
-subroutine photochem_driver(is,ie,js,je,kd,lon,lat,p_half,p_full,delp,  &
+subroutine photochem_driver(is,ie,js,je,kd,ntrace,lon,lat,p_half,p_full,delp,  &
                             t,tdt,time,dt,r,rdt,rdt_pchem,do_qmass) 
 
 use constants_mod, only: PI,rdgas,avogno,GRAV
 
 
-integer, intent(in)  :: is, js, ie, je, kd
+integer, intent(in)  :: is, js, ie, je, kd,ntrace
 logical, intent(in)  :: do_qmass
 real,    intent(in)  :: dt
 type(time_type), intent(in)             :: Time
@@ -457,11 +458,11 @@ end subroutine dust_update_end
 ! *****************************************************************     
 ! *****************************************************************
 
-subroutine dust_source_sink (   is, js, lon, lat, dt, Time, &
+subroutine dust_source_sink (   is, js, ie, je, kd, ntrace, lon, lat, dt, Time, &
                               p_half, p_full, tsfc,  snow, stress,k_pbl, source_mom, t, tdt, r, rdt, rdt_dst   ) 
 
 
-integer, intent(in)  :: is, js
+integer, intent(in)  :: is, js, ie, je, kd, ntrace
 real,    intent(in)  :: dt
 type(time_type), intent(in)             :: Time
 real, intent(in),    dimension(:,:)     :: lon,lat
@@ -502,13 +503,14 @@ end subroutine dust_source_init
 ! *****************************************************************     
 ! *****************************************************************
 
- subroutine dust_source_end(  days  )
+ subroutine dust_source_end(  phys_domain, days  )
 ! 
 ! Write soil dust accumulations to netCDF file
 !
 
 implicit none
 
+type(domain2d),      intent(inout) :: phys_domain
 integer,             intent(in) :: days
 
 

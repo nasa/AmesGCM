@@ -29,7 +29,7 @@ set optim = ""
 set cppDefs = "-DMARS_GCM -DMARS_SURFACE -DRELEASE"
 
 #--------------------------------------------------------------------------------------------------------
-set execdir = $cwd/exec.$platform.mars3.2  # where code is compiled and executable is created
+set execdir = $cwd/exec.$platform.mars3.3  # where code is compiled and executable is created
 set execname = FMS_MARS.x
 set executable = $execdir/$execname
 
@@ -57,7 +57,7 @@ cd $execdir
 
 #rjw -----  added new code below and  added $SLIST to the mkmf line.
 
-set SLIST = ( $sourcedir/atmos_phys/atmos_param/cg_drag/cg_drag.F90 )
+set SLIST = ( $sourcedir/atmos_phys/atmos_param/cg_drag/cg_drag.F90 $sourcedir/atmos_phys/atmos_param/moist_conv/moist_conv.F90 )
 
 echo '----------------*********--------------' /n
 echo ' Additional Source:  '  $SLIST
@@ -114,12 +114,14 @@ echo "made Makefile"
 if ( "$cppDefs" =~ *MARS_GDIAGS* ) then
 
 echo "found gdiags"
-$listpaths -o $execdir/path_names $src_fv3/driver/mars/atmosphere.F90 $sourcedir/atmos_drivers/mars/atmos_model.F90 $SLIST $src_share $src_fv3 $src_mars
+$listpaths -o $execdir/path_names $src_fv3/driver/mars/atmosphere.F90 $sourcedir/atmos_drivers/mars/atmos_model.F90 $SLIST $src_fv3/tools/fv_eta.F90 $src_share $src_fv3 $src_mars
 
 /bin/mv path_names pathnames.all
 egrep -v "*cmip*" pathnames.all > path_names
 /bin/mv path_names pathnames.all
 egrep -v "*fv_cmp*" pathnames.all > path_names
+/bin/mv path_names pathnames.all
+egrep -v "*/docs/*" pathnames.all > path_names
 /bin/mv path_names pathnames.all
 egrep -v "atmos_cubed_sphere/driver/GFDL/*"  pathnames.all  > path_names
 /bin/mv path_names pathnames.all
@@ -148,19 +150,19 @@ popd
 mkdir -p $execdir/atmos_cubed
 
 /bin/rm -f $execdir/atmos_cubed/*.html
-$listpaths -o $execdir/atmos_cubed/pathnames_atmos_cubed $src_fv3
+$listpaths -o $execdir/atmos_cubed/pathnames_atmos_cubed $src_fv3/tools/fv_eta.F90 $src_fv3
 
 pushd atmos_cubed
 
 
 /bin/mv pathnames_atmos_cubed pathnames.all
-egrep -v "atmos_cubed_sphere/driver/GFDL/*"  pathnames.all  > pathnames_atmos_cubed
-/bin/mv pathnames_atmos_cubed pathnames.all
-egrep -v "atmos_cubed_sphere/driver/SHiELD/*"  pathnames.all  > pathnames_atmos_cubed
+egrep -v "atmos_cubed_sphere/driver/*"  pathnames.all  > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
 egrep -v "*cmip*" pathnames.all > pathnames_atmos_cubed
-/bin/mv path_names pathnames.all
+/bin/mv pathnames_atmos_cubed pathnames.all
 egrep -v "*fv_cmp*" pathnames.all > pathnames_atmos_cubed
+/bin/mv pathnames_atmos_cubed pathnames.all
+egrep -v "*/docs/*" pathnames.all > pathnames_atmos_cubed
 
 $mkmf -m Makefile -a $sourcedir -p lib_atmos_cubed.a -t $template -c "$cppDefs" -o "-I$execdir/fms" $execdir/atmos_cubed/pathnames_atmos_cubed $src_share/include $src_share/mpp/include
 popd
@@ -169,7 +171,7 @@ popd
 mkdir -p $execdir/mars_atmos_phys
 
 /bin/rm -f $execdir/mars_atmos_phys/*.html
-$listpaths -o $execdir/mars_atmos_phys/pathnames_mars_atmos_phys $src_fv3/driver/mars/atmosphere.F90 $sourcedir/atmos_drivers/mars/atmos_model.F90 $sourcedir/AmesGCM/atmos_cubed_sphere_mars/mars_physics_update.F90 $SLIST $sourcedir/AmesGCM/atmos_param_mars
+$listpaths -o $execdir/mars_atmos_phys/pathnames_mars_atmos_phys $src_fv3/driver/mars/atmosphere.F90 $sourcedir/atmos_drivers/mars/atmos_model.F90 $src_mars/atmos_cubed_sphere_mars/mars_physics_update.F90 $SLIST $src_mars/atmos_param_mars
 
 
 pushd mars_atmos_phys

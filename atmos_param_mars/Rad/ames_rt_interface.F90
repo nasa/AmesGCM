@@ -17,17 +17,17 @@ subroutine ames_rt(is,js,id,jd,kd,ntrace,p_half,p_full,             &
                t,tsurf,r,trans,flx_sfc,                             &
                albedo,sfc_emiss,coszro,                             &
                dustref,dustref_bin,dustref_fix,                     &
-               cldref,cldicebin,                          &
+               cldref,cldco2ref,cldicebin,                          &
                dosw, dolw,                                          &
                rorbit,                                              &
                heatra,hsw,out_solar_flx,                            &
                rsolar,                                              &
                irupflx,irdnflx,swupflx,swdnflx,swnetflx,irnetflx,   &
-               taudust,taucloud,taudust_mom,            &
+               taudust,taucloud,tauco2cloud,taudust_mom,            &
                lw_heating_band,lw_15umHR,diag,tstrat_in,            &
                tstrat_dt,                                           &
                taudust_reff,taudust_fix,                            &
-               tbands          )
+               tbands, dsolflx, diffvt          )
 
 ! main interface routine
 implicit none
@@ -41,7 +41,7 @@ real,intent(inout), dimension(id,jd,kd)   :: dustref       ! output dust opacity
 real,intent(in),    dimension(id,jd,kd)   :: dustref_fix   ! input fixed dust opacity
 real,intent(in),    dimension(id,jd,kd)   :: dustref_bin   ! input bin dust opacity
 real,intent(inout), dimension(id,jd,kd,2)   :: cldref        ! output cloud opacity from RT
-!real,intent(inout), dimension(id,jd,kd)   :: cldco2ref     ! output co2 cloud opacity from RT
+real,intent(inout), dimension(id,jd,kd)   :: cldco2ref     ! output co2 cloud opacity from RT
 real, intent(in),   dimension(id,jd,kd)   :: cldicebin     ! input bin cloud opacity
 real,intent(in),    dimension(id,jd)      :: albedo, &     ! surface albedo
                                             sfc_emiss, &   ! surface emissivity
@@ -65,11 +65,13 @@ real,intent(out), dimension(size(t,1),size(t,2),size(t,3)+1) :: irupflx, &  ! IR
                                                             irnetflx        ! IR net flux [W/m^2]
 
 real,intent(out), dimension(size(t,1),size(t,2),3) :: tbands            !     brightness temperatures:  t7 t23 t32
+real,intent(out),    dimension(id,jd)     :: dsolflx, &                 ! direct solar flux
+                                             diffvt                     ! diffuse solar flux
 
 
 !   Opacities TB18c
 real,intent(inout), dimension(size(t,1),size(t,2),2) :: taudust, &      ! total column dust opacity
-!                                                    tauco2cloud, &     ! total column co2 cloud opacity
+                                                    tauco2cloud, &     ! total column co2 cloud opacity
                                                     taudust_mom, &     ! moment dust column dust opacity
                                                     taudust_fix     ! fixed dust column dust opacity
 real,intent(inout), dimension(size(t,1),size(t,2),4) :: taucloud     ! total column h2o cloud opacity
@@ -133,7 +135,7 @@ irnetflx = 0.
 flx_sfc = 0.
 taudust = 0.
 taucloud = 0.
-!tauco2cloud = 0.
+tauco2cloud = 0.
 taudust_reff = 0.
 mwratio = mwco2/mwh2o
 taudust_fix = 0.
@@ -225,6 +227,8 @@ do i=1,id
                    qtrace=r(i,j,:,:),cldice_bin= cldicecol,             &
                    taudust_diagARG=taudust(i,j,:),                  &
                    taucloud_diagARG=taucloud(i,j,:),                &
+                   tauco2cloud_diagARG=tauco2cloud(i,j,:),                &
+                   diffvtARG=diffvt(i,j),directsolARG=dsolflx(i,j), &
                    fmnetvARG=fmnetv,fluxdniARG=fluxdni,             &
                    outsolARG=out_solar_flx(i,j),                    &
                    swtotARG=sfmars,fluxupvARG=swupflx(i,j,:),       &
@@ -233,9 +237,12 @@ do i=1,id
                    lw_heating_spec=lw_heating_spec,htrt2=htrt2,     &
                    diag=diag,taurefd_out=dustref(i,j,:),            &
                    taurefc_out=cldref(i,j,:,:),                       &
+                   taurefco2c_out=cldco2ref(i,j,:),                 &
                    taudust_momARG=taudust_mom(i,j,:),               &
                    taudust_fixARG=taudust_fix(i,j,:),               &
                    tstrat_dt=tstrat_dt(i,j),                        &
+                   nco2=nco2,                                       &
+                   nice_blk=nice_blk,                               &
                    taudust_reffARG=taudust_tmp(:,:),                &
                    tbands= tbands(i,j,:)                )
 

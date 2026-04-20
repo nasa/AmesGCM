@@ -6,22 +6,20 @@ module palmer_topo_drag_mod
 !  Calculates horizontal velocity tendency due to topographic drag
 !
 
-use          mpp_mod, only: input_nml_file
-use          fms_mod, only: open_namelist_file,            &
-                            close_file, error_mesg, FATAL, NOTE,       &
-                            mpp_pe, mpp_root_pe, stdout, stdlog,       &
-                            check_nml_error, write_version_number
-use       mpp_io_mod, only: mpp_open, mpp_close,                       &
-                            mpp_read, mpp_write, mpp_write_meta,       &
-                            MPP_NETCDF, MPP_MULTI,                     &
-                            MPP_SINGLE, MPP_RDONLY, MPP_OVERWR,        &
-                            mpp_get_info, mpp_get_fields,              &
-                            mpp_get_atts, mpp_get_axis_data,           &
-                            mpp_get_axes, axistype, fieldtype
-use       fms_io_mod, only: read_data, field_size
-use       fms_io_mod, only: register_restart_field, restart_file_type
-use       fms_io_mod, only: save_restart, restore_state
-use fms2_io_mod,      only: file_exists
+use   mpp_mod, only: input_nml_file
+
+use           fms_mod, only: error_mesg, FATAL,       &
+                             check_nml_error, &
+                             mpp_pe, mpp_root_pe, &
+                             write_version_number, stdlog,        &
+                             uppercase
+
+use       fms2_io_mod, only:  file_exists, FmsNetcdfFile_t, FmsNetcdfDomainFile_t, &
+                                   register_restart_field, register_axis, unlimited, &
+                                   open_file, read_restart, write_restart, close_file, &
+                                   register_field, read_data, write_data, register_variable_attribute, &
+                                   get_global_io_domain_indices, get_variable_size, variable_exists
+
 use    constants_mod, only: Grav, Cp_Air, Rdgas, Pi
 use horiz_interp_mod, only: horiz_interp_type, horiz_interp_init, &
                             horiz_interp_new, horiz_interp, horiz_interp_del
@@ -37,10 +35,6 @@ character(len=128) :: version = '$Id: palmer_topo_drag.F90,v  2018/06/15 20:56:5
 character(len=128) :: tagname = '$Name: mars_june2018_ak $'
 
 character(len=*), parameter :: module='palmer_drag'
-
-type(axistype),  save :: Axes(3)
-type(fieldtype), save :: Fields(10)
-type(restart_file_type), save :: Topo_restart
 
 integer :: id_udt_topo, id_vdt_topo,  id_tdt_topo,                     &
            id_sfc_stressGW, id_topo_SD
@@ -77,7 +71,7 @@ contains
 !#######################################################################
 
 subroutine palmer_drag                                                   &
-                                             ( delt, uwnd, vwnd, atmp, &
+                                             (is, ie, js, je, kd, delt, uwnd, vwnd, atmp, &
                                            pfull, phalf, zfull, zhalf, &
                                             dtaux, dtauy, Time         ) 
 !
@@ -89,21 +83,22 @@ subroutine palmer_drag                                                   &
 !Oct 2018
 !                                                                     
 real,    intent(in) :: delt         ! DELT     Time step
+integer, intent(in) :: is, js, ie, je, kd
 type(time_type), intent(in) :: Time
 
 ! INPUT
 ! -----
-real, intent(in), dimension(:,:,:) :: uwnd, &   ! UWND     Zonal wind (dimensioned IDIM x JDIM x KDIM)
+real, intent(in), dimension(is:ie,js:je,kd) :: uwnd, &   ! UWND     Zonal wind (dimensioned IDIM x JDIM x KDIM)
                                     vwnd, &     ! VWND     Meridional wind (dimensioned IDIM x JDIM x KDIM)
                                     atmp        ! ATMP     Temperature at full levels (IDIM x JDIM x KDIM)
-real, intent(in), dimension(:,:,:) :: pfull, &  ! PFULL    Pressure at full levels (IDIM x JDIM x KDIM)
-                                    phalf, &    ! PHALF    Pressure at half levels (IDIM x JDIM x KDIM+1)
-                                    zfull, &    ! ZFULL    Height at full levels (IDIM x JDIM x KDIM)
+real, intent(in), dimension(is:ie,js:je,kd) :: pfull, &  ! PFULL    Pressure at full levels (IDIM x JDIM x KDIM)
+                                    zfull    ! ZFULL    Height at full levels (IDIM x JDIM x KDIM)
+real, intent(in), dimension(is:ie,js:je,kd+1) :: phalf, &    ! PHALF    Pressure at half levels (IDIM x JDIM x KDIM+1)
                                     zhalf       ! ZHALF    Height at half levels (IDIM x JDIM x KDIM+1)
 
 ! OUTPUT
 ! ------
-real, intent(out), dimension(:,:,:) :: dtaux, & ! DTAUX  Tendency of the vector wind in m/s^2 (IDIM x JDIM x KDIM)
+real, intent(out), dimension(is:ie,js:je,kd) :: dtaux, & ! DTAUX  Tendency of the vector wind in m/s^2 (IDIM x JDIM x KDIM)
                                     dtauy       ! DTAUY  Tendency of the vector wind in m/s^2 (IDIM x JDIM x KDIM)
 real,    dimension(size(zhalf,1),size(zhalf,2)) :: sfc_stressGW ! sfc_stressGW  surface stress for diagnostics (IDIM x JDIM)
 
@@ -615,19 +610,12 @@ integer, dimension(3)::resolution_avail
 integer id,jd
 !---------------
 integer :: io, ierr,unit_nml
-! read namelist
-#ifdef INTERNAL_FILE_NML
+
+!---------------------------------------------------------------------
+!    read namelist.
+!---------------------------------------------------------------------
 read (input_nml_file, nml=palmer_drag_nml, iostat=io)
 ierr = check_nml_error(io,'palmer_drag_nml')
-#else   
-unit_nml = open_namelist_file ( )
-ierr = 1
-do while ( ierr /= 0 )
-    read( unit_nml, nml = palmer_drag_nml, iostat = io, end = 10 )
-    ierr = check_nml_error (io, 'palmer_drag_nml')
-end do
-10 call close_file ( unit_nml )
-#endif
 
 ! write version number and namelist to logfile
 
