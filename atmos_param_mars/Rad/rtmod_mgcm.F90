@@ -2271,7 +2271,7 @@ do l = 1, l_layers
                     qxi(k,iwav) = qxi(k,iwav)+ surf(i) * qexti_cld(irap,i,iwav)
                     qsi(k,iwav) = qsi(k,iwav)+ surf(i) * qscati_cld(irap,i,iwav)
                     gi(k,iwav)  = gi(k,iwav) + surf(i) * gi_cld(irap,i,iwav)
-                    qbi(k,iwav) = qbi(i,iwav)+ surf(i) * fcorrect(i,irap) &
+                    qbi(k,iwav) = qbi(k,iwav)+ surf(i) * fcorrect(i,irap) &
                                 * (qexti_cld(irap,i,iwav)-qscati_cld(irap,i,iwav))
                 enddo
                 qsi(k,iwav) = min( qsi(k,iwav) , 0.99999*qxi(k,iwav) )
