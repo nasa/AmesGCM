@@ -1396,7 +1396,7 @@ if (dosw) sw_heating= gcp * sw_heating / scalep
 if (do_nlte_simple) then
 ! longwave (IR 15 micron cooling) NLTE correction
 
-    call simple_nltecool(l_layers,pmid,qtrace,tl,htrt)
+    call simple_nltecool(l_layers,plev,qtrace,tl,htrt)
     if (ames_15band) then
       do k=1,l_layers
         n=2*k+2
@@ -6685,7 +6685,11 @@ subroutine simple_nltecool(nlayer,player,qtrace,temp,qir15)
 
 implicit none
 
-real, dimension(:,:)    :: qtrace           !kg/kg
+integer, intent(in) :: nlayer
+real, dimension(l_levels),intent(in) :: player            !mbar
+real, dimension(nlayer,ntrace), intent(in)    :: qtrace           !kg/kg
+real, dimension(l_levels), intent(in) :: temp
+real, dimension(l_levels), intent(out) :: qir15             !K/sec
 real, dimension(nlayer) :: Rfac, Rfac0
 real, dimension(nlayer) :: gexp, gexp0
 real, dimension(nlayer) :: gden, gden0
@@ -6696,13 +6700,11 @@ real, dimension(nlayer) :: mu_mean_ref       !kg/mol
 real, dimension(nlayer) :: CO2,CO,O1,O2,H2   !#/m3
 real, dimension(nlayer) :: O3,H2O,N2,H2O2,OH !#/m3
 real, dimension(nlayer) :: CO2cgs,O1cgs      !#/cm3
-real, dimension(nlayer) :: player            !mbar
-real, dimension(nlayer) :: p_micro           !microbar
-real, dimension(nlayer) :: temp, temp0       !K
-real, dimension(nlayer) :: qir15             !K/sec
-real, dimension(nlayer) :: qir15ref          !K/sec
-real, dimension(nlayer) :: o1ref,co2ref,coref,n2ref  !#/m3
-real, dimension(nlayer) :: o1refcgs,co2refcgs        ! #/cm3
+real, dimension(l_levels) :: p_micro           !microbar
+real, dimension(l_levels) :: temp0       !K
+real, dimension(l_levels) :: qir15ref          !K/sec
+real, dimension(l_levels) :: o1ref,co2ref,coref,n2ref  !#/m3
+real, dimension(l_levels) :: o1refcgs,co2refcgs        ! #/cm3
 
 real*8 :: maxrefPres  ! max pressure of the MGITM ref atmopshere
 
@@ -6723,7 +6725,7 @@ logical :: mcpu0
 
 real, parameter :: BOLTZK = 1.380649E-23 !J/K
 
-integer :: k,i,nlayer
+integer :: k,i
 mcpu0 = (mpp_pe() == mpp_root_pe())
 
 nh2o   = find_field_index( MODEL_ATMOS, 'vap_mass_mom' )
@@ -6744,12 +6746,12 @@ qir15ref = 0.0
 
 ! ## Interpolating the Reference atmosphere on to the MGCM grid ##
 !--
-call interpnlte(nlnlte,log10(pres_mgref_day),tn_mgref_day,nlayer,log10(player),temp0)
-call interpnlte(nlnlte,log10(pres_mgref_day),log10(no_mgref_day),nlayer,log10(player),o1ref)
-call interpnlte(nlnlte,log10(pres_mgref_day),log10(nco2_mgref_day),nlayer,log10(player),co2ref)
-call interpnlte(nlnlte,log10(pres_mgref_day),log10(nco_mgref_day),nlayer,log10(player),coref)
-call interpnlte(nlnlte,log10(pres_mgref_day),log10(nn2_mgref_day),nlayer,log10(player),n2ref)
-call interpnlte(nlnlte,log10(pres_mgref_day),q15_mgref_day,nlayer,log10(player),qir15ref)
+call interpnlte(nlnlte,log10(pres_mgref_day),tn_mgref_day,l_levels,log10(player),temp0)
+call interpnlte(nlnlte,log10(pres_mgref_day),log10(no_mgref_day),l_levels,log10(player),o1ref)
+call interpnlte(nlnlte,log10(pres_mgref_day),log10(nco2_mgref_day),l_levels,log10(player),co2ref)
+call interpnlte(nlnlte,log10(pres_mgref_day),log10(nco_mgref_day),l_levels,log10(player),coref)
+call interpnlte(nlnlte,log10(pres_mgref_day),log10(nn2_mgref_day),l_levels,log10(player),n2ref)
+call interpnlte(nlnlte,log10(pres_mgref_day),q15_mgref_day,l_levels,log10(player),qir15ref)
 
 o1ref  = 10**(o1ref)
 co2ref = 10**(co2ref)
@@ -6761,7 +6763,7 @@ do k = 1,nlayer
     mu_mean(k) = qtrace(k,nco2)/mu_CO2   + qtrace(k,nco)/mu_CO + &
                  qtrace(k,no)/mu_O       + qtrace(k,no2)/mu_O2
     mu_mean(k) = 1. / mu_mean(k)
-    ntot(k) = (player(k)*100)/(BOLTZK * temp(k)) ![molec/m3]
+    ntot(k) = (player(2*k+2)*100)/(BOLTZK * temp(2*k+2)) ![molec/m3]
     CO2(k)  = ntot(k)*qtrace(k,nco2)*mu_mean(k)/mu_CO2
     O1(k)   = ntot(k)*qtrace(k,no)*mu_mean(k)/mu_O
 !   CO(k)   = ntot(k)*qtrace(k,nco)*mu_mean(k)/mu_CO
@@ -6780,8 +6782,8 @@ o1refcgs  = o1ref * 1e-6
 co2refcgs = co2ref * 1e-6
 
 do k = 1,nlayer
-    if (player(k) > 5e-3  .and. qir15ref(k) >= 0.) then
-       qir15(k) = 0.
+    if (player(2*k+2) > 5e-3  .and. qir15ref(2*k+2) >= 0.) then
+       qir15(2*k+2) = 0.
     else
 
 ! R is the ratio of the adopted temperature-dependent expression for Ko-co2 over Kco2-co2
@@ -6789,27 +6791,27 @@ do k = 1,nlayer
 !   Ko-co2 = 3e-12 cm3 sec-1 @ 300 K (Bougher 15 - Mars)
 !   Kco2-co2 = 5.75e-15 cm3 sec-1 @ 273 K
 !      Rfac(k) = (5.25e-14*sqrt(temp(k)))/(5.2e-15*(1+2e-3*(temp(k)-220.))*(temp(k)/273.))
-       Rfac(k) = (1.7321e-13*sqrt(temp(k)))/(5.2e-15*(1+2e-3*(temp(k)-220.))*(temp(k)/273.))
+       Rfac(k) = (1.7321e-13*sqrt(temp(2*k+2)))/(5.2e-15*(1+2e-3*(temp(2*k+2)-220.))*(temp(2*k+2)/273.))
 
-       gexp(k) = 40.6*((1/(temp0(k)**(1/3)))-(1/(temp(k)**(1/3))))
+       gexp(k) = 40.6*((1/(temp0(2*k+2)**(1/3)))-(1/(temp(2*k+2)**(1/3))))
        gden(k) = ((CO2cgs(k)+O1cgs(k))/(CO2cgs(k)+(Rfac(k)*O1cgs(k))))
-       gfac(k) = (0.02/p_micro(k))*exp(gexp(k))*gden(k)
+       gfac(k) = (0.02/p_micro(2*k+2))*exp(gexp(k))*gden(k)
 
-       Fband(k) = (exp(-960./temp(k)))/(1+gfac(k))
+       Fband(k) = (exp(-960./temp(2*k+2)))/(1+gfac(k))
 
 !-------Same calc but for reference Temp and [O] density
 !      Rfac0(k) = (5.25e-14*sqrt(temp0(k)))/(5.2e-15*(1+2e-3*(temp0(k)-220.))*(temp0(k)/273.))
-       Rfac0(k) = (1.7321e-13*sqrt(temp0(k)))/(5.2e-15*(1+2e-3*(temp0(k)-220.))*(temp0(k)/273.))
+       Rfac0(k) = (1.7321e-13*sqrt(temp0(2*k+2)))/(5.2e-15*(1+2e-3*(temp0(2*k+2)-220.))*(temp0(2*k+2)/273.))
 
        gexp0(k) = 0.
-       gden0(k) = ((co2refcgs(k)+o1refcgs(k))/(co2refcgs(k)+(Rfac0(k)*o1refcgs(k))))
-       gfac0(k) = (0.02/p_micro(k))*exp(gexp0(k))*gden0(k)
+       gden0(k) = ((co2refcgs(2*k+2)+o1refcgs(2*k+2))/(co2refcgs(2*k+2)+(Rfac0(k)*o1refcgs(2*k+2))))
+       gfac0(k) = (0.02/p_micro(2*k+2))*exp(gexp0(k))*gden0(k)
 
-       Fband0(k) = (exp(-960./temp0(k)))/(1+gfac0(k))
+       Fband0(k) = (exp(-960./temp0(2*k+2)))/(1+gfac0(k))
 
 !-------Calculate 15micron cooling
 
-       qir15(k) = qir15ref(k) * Fband(k)/Fband0(k)
+       qir15(2*k+2) = qir15ref(2*k+2) * Fband(k)/Fband0(k)
     endif
 end do !k-loop
 
