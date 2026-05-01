@@ -823,23 +823,6 @@ if (do_mars_surface) then
     qdt(:,:,:)    = rdt(:,:,:,nh2o_bin)
     gust(:,:)     = 1.0
 
-    call surface_flux_2d (lon, lat,                             &
-        t(:,:,kd), qarray(:,:,kd), u(:,:,kd), v(:,:,kd),        &
-        p_full(:,:,kd), zkd, ps, tsurf, qarray(:,:,kd),         &
-        zo, zo, zo, zo, gust,                                   &
-        sens, evap, flux_r, tau_x, tau_y,                       &
-        cd_m, cd_t, cd_q,                                       &
-        wind, u_star, b_star, q_star,                           &
-        dsens_dsurf, dedt_surf, dedq_surf, drdt_surf,           &
-        dsens_datmos, devap_datmos, dtau_du,  dtau_dv,          &
-        is, js, dt, Time)
-
-    ! dragm, dragh and drag_q are potentially used by other mars physics
-    dragm  = rhokd * cd_m * wind
-    dragh  = rhokd * cd_t * wind
-    drag_q = rhokd * cd_q * wind
-    rhouch = rhokd * cd_t * u_star / sqrt(cd_m(:,:))      ! for legacy rhouch/cp
-
     ! For now, zero out moisture fluxes
     ! These would be used by the soil model also
     evap(:,:) = 0.0
@@ -906,6 +889,22 @@ if (do_mars_surface) then
             endif
         else   ! ames pbl
 #ifdef fv3_turb
+        call surface_flux_2d (lon, lat,                             &
+            t(:,:,kd), qarray(:,:,kd), u(:,:,kd), v(:,:,kd),        &
+            p_full(:,:,kd), zkd, ps, tsurf, qarray(:,:,kd),         &
+            zo, zo, zo, zo, gust,                                   &
+            sens, evap, flux_r, tau_x, tau_y,                       &
+            cd_m, cd_t, cd_q,                                       &
+            wind, u_star, b_star, q_star,                           &
+            dsens_dsurf, dedt_surf, dedq_surf, drdt_surf,           &
+            dsens_datmos, devap_datmos, dtau_du,  dtau_dv,          &
+            is, js, dt, Time)
+
+        ! dragm, dragh and drag_q are potentially used by other mars physics
+       dragm  = rhokd * cd_m * wind
+       dragh  = rhokd * cd_t * wind
+       drag_q = rhokd * cd_q * wind
+       rhouch = rhokd * cd_t * u_star / sqrt(cd_m(:,:))      ! for legacy rhouch/cp
 
 !--------------------------------------
 !!! VERTICAL DIFFUSION WITH FV3 SCHEME

@@ -176,9 +176,11 @@ else
 cd_m=  cd_drag_cnst
 cd_t=  cd_drag_cnst
 cd_q=  cd_drag_cnst
-u_star= 0.0
-b_star= 0.0
-!endif
+u_star= 1.e-10
+b_star= 1.e-10
+#ifdef fv3_turb
+endif
+#endif
 
 ! surface layer drag coefficients
 drag_t = cd_t * w_atm

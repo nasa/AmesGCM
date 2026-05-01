@@ -310,6 +310,9 @@ if (opac_from_aerosol) then
 else
     tau_current(:,:) = taudust(:,:,dgdm_type) / p_full(:,:,kd) * 610.
 endif
+where (tau_current < 1.d-10)
+    tau_current = 1.d-10
+end where
 if( id_taucurrent > 0 )  used = send_data( id_taucurrent, tau_current(:,:), Time, is, js )
 #ifndef RELEASE
 !------------------- Tagging methods --------------------
