@@ -419,6 +419,7 @@ call init_radtrans()
 
 PTOP = 10.0**PFGASREF(1)
 
+#IFNDEF RELEASE
 ! ---------------------
 ! Reading Ref. Atmosphere  
 if (do_nlte_simple) then
@@ -455,6 +456,7 @@ q15_mgref_day  = q15_mgref1(nlnlte:1:-1) /88775 !* 8.8775e-4 !8.64e-4  !K/Sol ->
 
 endif
 ! -----
+#ENDIF
 
 end subroutine ames_radsetup
 
@@ -1393,6 +1395,7 @@ if (dolw) lw_heating= gcp * lw_heating / scalep
 if (dolw) lw_heating_spec= gcp * lw_heating_spec / scalep
 if (dosw) sw_heating= gcp * sw_heating / scalep
 
+#IFNDEF RELEASE
 if (do_nlte_simple) then
 ! longwave (IR 15 micron cooling) NLTE correction
 
@@ -1416,6 +1419,7 @@ if (do_nlte_simple) then
       end do
     endif !15 band
 endif !IR NLTE correction
+#ENDIF
 
 ! shortwave (solar heating) NLTE correction
 irtot0 = gcp*(FMNETI(1) - NFLUXTOPI)/scalep

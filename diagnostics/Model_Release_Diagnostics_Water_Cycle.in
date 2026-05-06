@@ -679,7 +679,7 @@ Lon +/-180     = all
 Latitude       = all
 Level [Pa/m]   = None
 Diurnal  [hr]  = None
-Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [0,0.6] | linestyle = - | axlabel = Ice Optical Depth
+Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [0,1.0] | linestyle = - | axlabel = Ice Optical Depth
 
 <<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
 Title          = Global Mean Water Vapor [pr-um]
