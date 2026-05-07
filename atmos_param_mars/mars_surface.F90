@@ -39,7 +39,8 @@ implicit none
 
 public :: mars_surface_init, mars_surface_end,  progts, sfc_snow, sfc_frost, &
          sfc_frost_mom, sfc_frost_blk, sfc_h2o2_chem, id_sfc_h2o2_chem, &
-         cumulative_prec_blk, cumulative_prec_mconv
+         cumulative_prec_blk, cumulative_prec_mconv, &
+         cumulative_prec_thres, cumulative_prec_sedim
 
 !-----------------------------------------------------------------------
 !-------------------- namelist -----------------------------------------
@@ -109,6 +110,9 @@ real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_mom        !  (wate
 real, dimension(:,:,:),     allocatable, save  ::  sfc_frost_blk        !  (water)
 real, dimension(:,:,:),     allocatable, save  ::  cumulative_prec_blk  !  (cumulative precipitation bulk scheme)
 real, dimension(:,:,:),   allocatable, save  ::  cumulative_prec_mconv  !  (cumulative precipitation moist convection scheme)
+real, dimension(:,:,:),   allocatable, save  ::  cumulative_prec_thres  !  (cumulative precipitation threshold precip only)
+real, dimension(:,:,:),   allocatable, save  ::  cumulative_prec_sedim  !  (cumulative precipitation sedimentation only)
+
 real, dimension(:,:),     allocatable, save  ::  sfc_h2o2_chem          !  (h2o2)
 real, dimension(:,:),     allocatable, save  ::  sfc_roughness          !  map of surface roughness
 real, dimension(:,:),     allocatable, save  ::  sfc_topo               !  map of surface topography
@@ -220,6 +224,8 @@ allocate (  sfc_frost_mom      (id,jd,nice_mass)  )
 allocate (  sfc_frost_blk  (id,jd,1)  )
 allocate (  cumulative_prec_blk  (id,jd,3)  )
 allocate (  cumulative_prec_mconv  (id,jd,3)  )
+allocate (  cumulative_prec_thres  (id,jd,3)  )
+allocate (  cumulative_prec_sedim  (id,jd,3)  )
 allocate (  sfc_h2o2_chem  (id,jd)  )
 allocate (  sfc_roughness  (id,jd)  )
 allocate (  sfc_topo       (id,jd)  )
@@ -344,6 +350,8 @@ else
     sfc_snow(:,:)= 0.0
     cumulative_prec_blk(:,:,:)= 0.0
     cumulative_prec_mconv(:,:,:)= 0.0
+    cumulative_prec_thres(:,:,:)= 0.0
+    cumulative_prec_sedim(:,:,:)= 0.0
     do nt=1, nice_mass
         where( lat > 80.0*pi/180.0 )
             sfc_frost(:,:,1)= init_sfc_frost
@@ -1517,6 +1525,9 @@ if (PRESENT(Surf_restart)) then
     call register_restart_field(Surf_restart, 'frost', sfc_frost(:,:,1), dim_names_3d, is_optional=.true.)
     call register_restart_field(Surf_restart, 'frost_blk', sfc_frost_blk(:,:,1), dim_names_3d, is_optional=.true.)
     call register_restart_field(Surf_restart, 'cprecip_blk', cumulative_prec_blk, dim_names_blk, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'cprecip_mconv', cumulative_prec_mconv, dim_names_blk, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'cprecip_thres', cumulative_prec_thres, dim_names_blk, is_optional=.true.)
+    call register_restart_field(Surf_restart, 'cprecip_sedim', cumulative_prec_sedim, dim_names_blk, is_optional=.true.)
 
     do n=1,nice_mass
         ndx= ice_mass_indx(n)
@@ -1545,6 +1556,9 @@ if (rst2 .and. PRESENT (Surf_restart2)) then
     call register_restart_field(Surf_restart2, 'frost', sfc_frost(:,:,1), dim_names_3d, is_optional=.true.)
     call register_restart_field(Surf_restart2, 'frost_blk', sfc_frost_blk(:,:,1), dim_names_3d, is_optional=.true.)
     call register_restart_field(Surf_restart2, 'cprecip_blk', cumulative_prec_blk, dim_names_blk, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'cprecip_mconv', cumulative_prec_mconv, dim_names_blk, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'cprecip_thres', cumulative_prec_thres, dim_names_blk, is_optional=.true.)
+    call register_restart_field(Surf_restart2, 'cprecip_sedim', cumulative_prec_sedim, dim_names_blk, is_optional=.true.)
 
     do n=1,nice_mass
         ndx= ice_mass_indx(n)

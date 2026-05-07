@@ -22,7 +22,9 @@ use mpp_mod, only: input_nml_file
 use time_manager_mod, only: time_type
 use diag_manager_mod, only: register_diag_field, send_data
 use rtmod_mgcm, only: dtridgl   ! for call to dtridgl TB18q
-use mars_surface_mod,  only: sfc_frost_blk, cumulative_prec_blk
+use mars_surface_mod,  only: sfc_frost_blk, cumulative_prec_blk, &
+                                            cumulative_prec_thres, &
+                                            cumulative_prec_sedim
 use field_manager_mod, only  : MODEL_ATMOS, find_field_index 
 
 implicit none
@@ -38,7 +40,10 @@ real*8, parameter :: lw  = 2.8e+6          ! latent heat of vaporization [J/kg]
 namelist /blkh2oclouds_nml/ ccn_blkh2o,prec_threshold
 
 integer ::  id_blkh2ocld, id_blkh2ocld_col, id_blkh2ocld_r, id_blkh2o_sed_dt, id_blkh2ocld_gen, id_blkh2o_sed_v
+integer ::  id_blkvap_col
 integer ::  id_cprecip, id_cprecip_rain, id_cprecip_snow
+integer ::  id_cprecip_thres, id_cprecip_thres_rain, id_cprecip_thres_snow
+integer ::  id_cprecip_sedim, id_cprecip_sedim_rain, id_cprecip_sedim_snow
 
 !-------------------- Other -----------------------------------------
 logical ::  mcpu0
@@ -120,7 +125,7 @@ integer :: nz, lbot
 !     Atmospheric variable on regular vertical grid
 !     **********************
 real*8, dimension(size(t,1),size(t,2)) :: h2ocol  ! h2o column abundance [kg/m2]
-
+real*8, dimension(size(t,1),size(t,2)) :: vapcol  ! vap column abundance [kg/m2]
 real*8, dimension(size(t,1),size(t,2),size(t,3)) :: rho ! Atmospheric density 
 real*8, dimension(size(t,1),size(t,2),size(t,3)) :: rh2o ! Particle radius (m) 
 real*8, dimension(size(t,1),size(t,2),size(t,3)) :: sat_ratio ! Saturation
@@ -293,11 +298,14 @@ do i=is,ie
             sfc_frost_blk(i,j,1)=sfc_frost_blk(i,j,1)+prec
             ! Total cumulative precip bucket
             cumulative_prec_blk(i,j,1)=cumulative_prec_blk(i,j,1)+prec
+            cumulative_prec_thres(i,j,1) =cumulative_prec_thres(i,j,1)+prec
             ! Check if rain or snow
             if (tl(i,j,2*nz+2) .ge. 273.) then
               cumulative_prec_blk(i,j,2)=cumulative_prec_blk(i,j,2)+prec
+              cumulative_prec_thres(i,j,2)=cumulative_prec_thres(i,j,2)+prec
             else
               cumulative_prec_blk(i,j,3)=cumulative_prec_blk(i,j,3)+prec
+              cumulative_prec_thres(i,j,3)=cumulative_prec_thres(i,j,3)+prec
             end if
 
             qpicld(i,j,k)=prec_threshold
@@ -328,11 +336,14 @@ do i=is,ie
         sfc_frost_blk(i,j,1)=sfc_frost_blk(i,j,1) + deposit_h2o
 
         cumulative_prec_blk(i,j,1)=cumulative_prec_blk(i,j,1)+deposit_h2o
+        cumulative_prec_sedim(i,j,1)=cumulative_prec_sedim(i,j,1)+deposit_h2o
         ! check if rainfall or snowfall
         if (tl(i,j,2*nz+2) .ge. 273.) then
           cumulative_prec_blk(i,j,2)=cumulative_prec_blk(i,j,2)+deposit_h2o
+          cumulative_prec_sedim(i,j,2)=cumulative_prec_sedim(i,j,2)+deposit_h2o
         else
           cumulative_prec_blk(i,j,3)=cumulative_prec_blk(i,j,3)+deposit_h2o
+          cumulative_prec_sedim(i,j,3)=cumulative_prec_sedim(i,j,3)+deposit_h2o
         end if
  
     enddo    ! j
@@ -350,9 +361,12 @@ end do
 fact= 1.0/grav
 
 h2ocol(is:ie,js:je)= 0.0
+vapcol(is:ie,js:je)= 0.0
 do n= 1, nz
     h2ocol(is:ie,js:je)= h2ocol(is:ie,js:je) + (r(:,:,n,nice_blk)+dtime*(rdt(:,:,n,nice_blk) &
                          +rdt_blkh2o(:,:,n,nice_blk)))*delp(:,:,n)*fact
+    vapcol(is:ie,js:je)= vapcol(is:ie,js:je) + (r(:,:,n,nh2o_blk)+dtime*(rdt(:,:,n,nh2o_blk) &
+                         +rdt_blkh2o(:,:,n,nh2o_blk)))*delp(:,:,n)*fact
 enddo
 
 rfin = r(:,:,:,nice_blk)+dtime*(rdt(:,:,:,nice_blk)+rdt_blkh2o(:,:,:,nice_blk))
@@ -360,9 +374,16 @@ rfin = r(:,:,:,nice_blk)+dtime*(rdt(:,:,:,nice_blk)+rdt_blkh2o(:,:,:,nice_blk))
 if (id_blkh2ocld > 0) used = send_data ( id_blkh2ocld, rfin, time, is, js )
 if (id_blkh2ocld_col > 0) used = send_data ( id_blkh2ocld_col, h2ocol(is:ie,js:je), time, is, js )
 if (id_blkh2ocld_r > 0)  used = send_data ( id_blkh2ocld_r, rh2o, time, is, js )
+if (id_blkvap_col > 0) used = send_data ( id_blkvap_col, vapcol(is:ie,js:je), time, is, js )
 if (id_cprecip > 0)  used =send_data ( id_cprecip, cumulative_prec_blk(:,:,1), time, is, js)
 if (id_cprecip_rain > 0)  used =send_data ( id_cprecip_rain, cumulative_prec_blk(:,:,2), time, is, js)
 if (id_cprecip_snow > 0)  used =send_data ( id_cprecip_snow, cumulative_prec_blk(:,:,3), time, is, js)
+if (id_cprecip_thres > 0)  used =send_data ( id_cprecip_thres, cumulative_prec_thres(:,:,1), time, is, js)
+if (id_cprecip_thres_rain > 0)  used =send_data ( id_cprecip_thres_rain, cumulative_prec_thres(:,:,2), time, is, js)
+if (id_cprecip_thres_snow > 0)  used =send_data ( id_cprecip_thres_snow, cumulative_prec_thres(:,:,3), time, is, js)
+if (id_cprecip_sedim > 0)  used =send_data ( id_cprecip_sedim, cumulative_prec_sedim(:,:,1), time, is, js)
+if (id_cprecip_sedim_rain > 0)  used =send_data ( id_cprecip_sedim_rain, cumulative_prec_sedim(:,:,2), time, is, js)
+if (id_cprecip_sedim_snow > 0)  used =send_data ( id_cprecip_sedim_snow, cumulative_prec_sedim(:,:,3), time, is, js)
 
 
 return
@@ -813,6 +834,11 @@ id_blkh2ocld_col = register_diag_field ( mod_name, 'blkh2ocld_col',  &
                                 'bulk h2o cld column ', '',        &
                                  missing_value=missing_value )
 
+id_blkvap_col = register_diag_field ( mod_name, 'blkvap_col',  &
+                                 (/axes(1:2)/), Time,           &
+                                'bulk vapor column ', '',        &
+                                 missing_value=missing_value )
+
 id_cprecip = register_diag_field ( mod_name, 'cprecip',  &
                                  (/axes(1:2)/), Time,           &
                                 'cumulative total precipitation bulk scheme', '',     &
@@ -826,6 +852,36 @@ id_cprecip_rain = register_diag_field ( mod_name, 'cprecip_rain',  &
 id_cprecip_snow = register_diag_field ( mod_name, 'cprecip_snow',  &
                                  (/axes(1:2)/), Time,           &
                                 'cumulative total snowfall bulk scheme', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_thres = register_diag_field ( mod_name, 'cprecip_thres',  &
+                                 (/axes(1:2)/), Time,           &
+                                'cumulative precipitation, threshold precip only', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_thres_rain = register_diag_field ( mod_name, 'cprecip_thres_rain',  &
+                                 axes(1:2), Time,           &
+                                'cumulative rainfall, threshold precip only', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_thres_snow = register_diag_field ( mod_name, 'cprecip_thres_snow',  &
+                                 (/axes(1:2)/), Time,           &
+                                'cumulative snowfall, threshold precip only', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_sedim = register_diag_field ( mod_name, 'cprecip_sedim',  &
+                                 (/axes(1:2)/), Time,           &
+                                'cumulative precipitation from sedimentation only', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_sedim_rain = register_diag_field ( mod_name, 'cprecip_sedim_rain',  &
+                                 axes(1:2), Time,           &
+                                'cumulative rainfall from sedimentation only', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_sedim_snow = register_diag_field ( mod_name, 'cprecip_sedim_snow',  &
+                                 (/axes(1:2)/), Time,           &
+                                'cumulative snowfall from sedimentation only', '',     &
                                  missing_value=missing_value )
 
 id_blkh2ocld_r = register_diag_field ( mod_name, 'blkh2ocld_rad',  &

@@ -263,6 +263,7 @@ integer :: id_uv, id_vt, id_uw, id_dnflux
 integer :: id_rdt_h2o2,id_cond_mass,id_rdt_subl_bin,id_rdt_subl_blk
 integer :: id_delz
 integer :: id_tdt_mconv
+integer :: id_cprecip_mconv,id_cprecip_mconv_rain, id_cprecip_mconv_snow
 
 integer, dimension(:), allocatable  :: id_rdt_pbl, id_rdt_adj, id_rdt_dst,              &
                                        id_rdt_micro, id_rdt_dif, id_rdt_hrad,           &
@@ -1299,6 +1300,10 @@ if (do_moist_convective_adjust) then
     tdt = tdt + tdt_mconv
     rdt = rdt + rdt_mconv
 
+    if (id_cprecip_mconv > 0)  used =send_data ( id_cprecip_mconv, cumulative_prec_mconv(:,:,1), time, is, js)
+    if (id_cprecip_mconv_rain > 0)  used =send_data ( id_cprecip_mconv_rain, cumulative_prec_mconv(:,:,2), time, is, js)
+    if (id_cprecip_mconv_snow > 0)  used =send_data ( id_cprecip_mconv_snow, cumulative_prec_mconv(:,:,3), time, is, js)
+
 endif
 
 
@@ -1727,6 +1732,22 @@ do nt = 1, nice_mass
                         axes(1:3), Time, 'Water Moment Sublimation Tendency', 'kg/kg/s',    &
                         missing_value=missing_value)
 enddo
+
+
+id_cprecip_mconv = register_diag_field ( mod_name, 'cprecip_mconv',  &
+                                 (/axes(1:2)/), Time,           &
+                                'cumulative precipitation from moist convection only', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_mconv_rain = register_diag_field ( mod_name, 'cprecip_mconv_rain',  &
+                                 axes(1:2), Time,           &
+                                'cumulative rainfall from moist convection only', '',     &
+                                 missing_value=missing_value )
+
+id_cprecip_mconv_snow = register_diag_field ( mod_name, 'cprecip_mconv_snow',  &
+                                 (/axes(1:2)/), Time,           &
+                                'cumulative snowfall from moist convection only', '',     &
+                                 missing_value=missing_value )
 
 
 !!! TEMPERATURE TENDENCIES

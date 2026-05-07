@@ -16,7 +16,7 @@
 #**************************************************************************************************
 # ====================================== Execution Variables  =====================================
 #**************************************************************************************************
-set name = fms_earlymars_500mb_v3.2
+set name = fms_earlymars_500mb_v3.2_co2clds_h2oclds
 set scriptname = $cwd/$name
 set classdir = am4_earlymars_runs
 set workdir = /nobackup/$USER/FMS_MARS_runs/$classdir/$name # Where model is run, output stored
@@ -178,6 +178,18 @@ $name
 "mars_surface", "snow",         "co2ice_sfc",   "atmos_average", "all", .true.,      "none", 2,
 "mars_physics", "precip",       "precip",       "atmos_average", "all", .true.,      "none", 2,
 "mars_surface", "ts",           "ts",           "atmos_average", "all", .true.,      "none", 2,
+"dynamics",     "ice_mass_blk",       "ice_mass_blk",    "atmos_average","all",.true.,"none", 2,
+"dynamics",     "vap_mass_blk",       "vap_mass_blk",    "atmos_average","all",.true.,"none", 2,
+"dynamics",     "co2_cloud",          "co2_cld_mass",    "atmos_average","all",.true.,"none", 2,
+"co2cloudphys", "co2cld_rad",         "co2cld_rad",      "atmos_average","all",.true.,"none", 2,
+"co2cloudphys", "co2cld_col",         "co2cld_col",      "atmos_average","all",.true.,"none", 2,
+"h2oblkcloudphys","blkh2ocld_rad",    "blkh2ocld_rad",   "atmos_average","all",.true.,"none", 2,
+"h2oblkcloudphys","blkh2ocld_col",    "blkh2ocld_col",   "atmos_average","all",.true.,"none", 2,
+"h2oblkcloudphys","blkvap_col",    "blkvap_col",   "atmos_average","all",.true.,"none", 2,
+"h2oblkcloudphys","cprecip",          "cprecip",         "atmos_average","all",.true.,"none", 2,
+"h2oblkcloudphys","cprecip_rain",     "cprecip_rain",    "atmos_average","all",.true.,"none", 2,
+"h2oblkcloudphys","cprecip_snow",     "cprecip_snow",    "atmos_average","all",.true.,"none", 2,
+"mars_surface", "frost_blk",    "frost_blk",    "atmos_average", "all", .true.,      "none", 2,
 "radiation",    "irupflx_top",  "irupflx_top",  "atmos_average", "all", .true.,      "none", 2,
 "radiation",    "irdnflx_top",  "irdnflx_top",  "atmos_average", "all", .true.,      "none", 2,
 "radiation",    "irupflx_sfc",  "irupflx_sfc",  "atmos_average", "all", .true.,      "none", 2,
@@ -374,7 +386,11 @@ cat > input.nml.unexpanded <<\EOF
     soil_temp = 220.,           ! Isothermal initialization soil temperature [K]. Must be > 0. Used only if no input file is provided
     use_legacy_soil = T,        ! FLAG: Use legacy soil rho cp values
     alpha = 0.5,                ! Defines surface temperature calculation (0 = fully explicit, 0.5 = semi-implicit, 1.0 = fully implicit)
-
+    do_waterice_albedo = T,     ! FLAG: Activate change of albedo by water ice
+    do_liquidwater_albedo = T,  ! FLAG: Activate change of albedo by liquid water 
+    frost_threshold = 5.e-6,    ! The threshold above which water frost influences surface albedo (depth in m)
+    init_sfc_frost = 1000.      ! 1 m of ice
+    albedo_h2o = 0.5,
 /
 
  &mars_iso_nml
@@ -393,6 +409,7 @@ cat > input.nml.unexpanded <<\EOF
                                             !   If do_co2_condesnation_cycle = F, CO2 cap formation still
                                             !   allowed, it influences T and albedos, but mass source/sink
                                             !   does not affect the pressure cycle.
+        form_co2_clouds = T,                !  If doing atmospheric co2 condensation, form clouds instead of putting condensed mass directly onto surface
     GW_drag_TOG = 0,                        ! Toggle for gravity wave drag
                                             !   = 0 for none
                                             !   = 1 for Palmer 1986 orographic waves
@@ -401,7 +418,11 @@ cat > input.nml.unexpanded <<\EOF
     rayleighModelTop_flag = T,              ! FLAG: apply Rayleigh damping near the top of the model boundary
     rayleighModelTop_pres_cutoff = 125.,    ! Set Rayleigh damping to zero below this level (Pa)
     rayleighModelTop_pres_inflex = 13.,     ! Raleigh damping inflection pressure level (Pa)
-
+    do_bin_water_cycle = F,                 ! FLAG: for bulk scheme, turn off bin water cycle
+    liquid_vap_pres = T,                    ! FLAG: for bulk scheme, calculate vapor pressure over liquid water and ice
+    blk_latent_heat = T,                    ! FLAG: for bulk scheme, latent heat calculated for progts
+    form_bulk_clouds = T,                   ! FLAG: for bulk scheme, form bulk water clouds
+    do_moist_convective_adjust = T,         ! FLAG: do moist convective adjustment
 /
 
 &ames_pblmod_nml
@@ -414,8 +435,9 @@ cat > input.nml.unexpanded <<\EOF
 
  &aerosol_util_nml
     do_15band = T,          ! FLAG: T = use 15 band radiation for aerosol optics. F = 12 band. MUST match rtmod flag
+    do_bulk_water = T,      ! FLAG: Do surface water exchange for bulk scheme
     do_moment_dust = F,     ! FLAG: Do dust moment microphysics
-
+    do_moment_water = F,
 /
 
  &aerosol_nml
@@ -453,6 +475,9 @@ cat > input.nml.unexpanded <<\EOF
                                 !   = 1 transported moment dust (defined by dust_update_nml flags)
                                 !   = 2 not supported
                                 !   = 3 prescribed fixed (defined by aerosol_nml flags)
+    radactive_co2cloud = T,     ! FLAG: Radiatively active CO2 clouds
+    radactive_water = T,        ! FLAG: Radiatively active water vapor
+    radactive_cloud_bulk = T,   ! FLAG: Radiatively active bulk water clouds
     use_extended_cor_ks = T,    ! FLAG: Extended temperature range and CO2 line widths appropriate for higher pressures
     ames_15band = T,            ! FLAG: Use 15-band aerosol optics. If =F, use 12 band. Must match aerosol_util_nml flag
     use_boxinterp12 = F,        ! FLAG: Use boxinterp for k-coef interpolation with 12-band. Cannot be used with 15-band.
@@ -478,7 +503,7 @@ cat > input.nml.unexpanded <<\EOF
 /
 
  &test_case_nml
-    test_case = 10                  ! Topography type. = 11 for Mars topo; = 10 for flat topo
+    test_case = 11                  ! Topography type. = 11 for Mars topo; = 10 for flat topo
 /
 
 \EOF
@@ -530,6 +555,7 @@ cp $datadir/DustQ_Tbright_MK.dat                DustQ_Tbright_MK.dat
 cp $datadir/waterCoatedQ_Tbright_MK.dat         waterCoatedQ_Tbright_MK.dat
 
 cp $datadir/palmer_drag_input_c24_c48_c96.nc .
+cp $datadir/input_file_nlte .
 
 #------ Copy hi-res topography, TI, albedo, and surface emissivity:
 cp $datadir/mars_topo_mola16.nc                 mars_topo.nc
