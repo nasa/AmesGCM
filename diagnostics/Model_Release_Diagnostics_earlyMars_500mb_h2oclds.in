@@ -635,7 +635,7 @@ HOLD OFF
 HOLD ON
 
 <<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
-Title          = Annual Global Mean Surface Temperature [K]
+Title          = Global Mean Surface Temperature [K]
 Legend         = Surface Temperature
 Main Variable  = 00668.atmos_average_pstd.ts
 Ls 0-360       = AXIS
@@ -646,7 +646,7 @@ Diurnal  [hr]  = None
 Axis Options  : lat,lon+/-180,[Pa/m],Ls = [None,None] | var = [None,None] | linestyle = - | axlabel = None
 
 <<<<<<<<<<<<<<| Plot 1D = True |>>>>>>>>>>>>>
-Title          = Annual Global Mean Surface Pressure [Pa]
+Title          = Global Mean Surface Pressure [Pa]
 Legend         = Surface Pressure
 Main Variable  = 00668.atmos_average_pstd.ps
 Ls 0-360       = AXIS
