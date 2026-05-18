@@ -372,10 +372,11 @@ cat > input.nml.unexpanded <<\EOF
     hord_vt         = 10,           ! Horizontal transport option for vort
     hord_dp         = 10,           ! Horizontal transport option for delp
     nwat            = 0,            ! Number of water constituents
+    hord_tr         = 12,           ! Horizontal transport option of tracers
+    is_ideal_case   = T,            ! Cold start
      hydrostatic = $hydrostatic,
      phys_hydrostatic = $phys_hydrostatic,
      use_hydro_pressure = $use_hydro_pressure,
-    is_ideal_case = T,
 /
 
 &fv_nest_nml

@@ -359,7 +359,8 @@ cat > input.nml.unexpanded <<\EOF
     hord_vt = 10,               ! Horizontal transport option for vort
     hord_dp = 10,               ! Horizontal transport option for delp
     nwat = 0,                   ! Number of water constituents
-    is_ideal_case = T,          ! Flag for cold start
+    hord_tr         = 12,           ! Horizontal transport option of tracers
+    is_ideal_case   = T,            ! Cold start
 /
 
  &main_nml

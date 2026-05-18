@@ -41,7 +41,7 @@ set NPZ_RST = 0     # Resolution in restart file
 #**************************************************************************************************
 
 #------ Tells model how long to run. Default = (668 668) is 2 years, 1 year per output file
-set dayslist = ( 668 668 668 )  # Number of days per execution.
+set dayslist = ( 668 668 )  # Number of days per execution.
 set num_executions = $#dayslist # Number of executions. Each run restarts from previous run.
 
 #------ Define the run type:
@@ -343,6 +343,8 @@ cat > input.nml.unexpanded <<\EOF
     hord_vt = 10,               ! Horizontal transport option for vort
     hord_dp = 10,               ! Horizontal transport option for delp
     nwat = 0,                   ! Number of water constituents
+    hord_tr = 12,               ! Horizontal transport option of tracers
+    is_ideal_case = T,          ! Cold start
 /
 
  &main_nml

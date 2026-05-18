@@ -2848,7 +2848,7 @@ real, intent(in)                        :: dt                                   
 integer, intent(in)                     :: nz,is,js,ie,je,ntrace
 real, intent(in), dimension(is:ie,js:je)        :: lat                                          ! latitude [rad]
 real, intent(in), dimension(is:ie,js:je)        :: lon                                          ! longitude [rad]
-real, intent(in), dimension(is:ie,js:je,nz+1)      :: pl                                           ! pressure at each half level [mbar]
+real, intent(in), dimension(is:ie,js:je,nz+1)      :: pl                                           ! pressure at each half level [Pa]
 real, intent(in), dimension(is:ie,js:je)        :: drg                                          ! drag
 integer, intent(in), dimension(is:ie,js:je)     :: kpbl                                         ! level of pbl top
 integer, intent(in)                     :: nh2o                                         ! index for water vapor

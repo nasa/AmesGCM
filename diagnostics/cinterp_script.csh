@@ -113,7 +113,7 @@ endif
 #SLES11
 #set regridpath = /u/mkahre/MCMC/analysis/lib/SLES11
 #SLES12
-set regridpath = /usr/local/bin
+set regridpath = ~/.local/bin
 #set regridpath = /u/rurata/fregrid_150422
 set fregrid = $regridpath/fregrid
 set fregrid_parallel = $regridpath/fregrid_parallel
