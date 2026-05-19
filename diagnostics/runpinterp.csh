@@ -12,8 +12,11 @@ module load netcdf/4.4.1.1_mpt
 module load pkgsrc
 module load nco/4.6.7
 
-setenv PATH /u/$USER/FRE-NCtools/bin:$PATH
-set PINTERP = /u/$USER/FRE-NCtools/bin/plevel.sh    #may require absolute path
+# FRE-NCtools binaries (plevel.sh, etc.) must be on $PATH.
+# Set this once in your ~/.cshrc, e.g.:
+#     setenv PATH "$HOME/.local/bin:$PATH"
+# If $PATH isn't set up, override below with an absolute path.
+set PINTERP = plevel.sh
 
 set date = 0
 set ftype = atmos_average

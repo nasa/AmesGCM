@@ -110,15 +110,14 @@ if ( $date != 0 ) then
 endif 
 
 
-#SLES11
-#set regridpath = /u/mkahre/MCMC/analysis/lib/SLES11
-#SLES12
-set regridpath = ~/.local/bin
-#set regridpath = /u/rurata/fregrid_150422
-set fregrid = $regridpath/fregrid
-set fregrid_parallel = $regridpath/fregrid_parallel
-set HGRID = $regridpath/make_hgrid
-set MOSAIC = $regridpath/make_solo_mosaic
+# FRE-NCtools binaries must be on $PATH.
+# Set this once in your ~/.cshrc, e.g.:
+#     setenv PATH "$HOME/.local/bin:$PATH"
+# If $PATH isn't set up, override these with absolute paths.
+set fregrid          = fregrid
+set fregrid_parallel = fregrid_parallel
+set HGRID            = make_hgrid
+set MOSAIC           = make_solo_mosaic
 
 
 limit stacksize unlimited
