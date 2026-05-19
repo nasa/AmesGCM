@@ -3168,7 +3168,8 @@ do i = is, ie
         if (qpig(i,j) .ge. 0.) then
             !If surface temperature is above freezing, use Buck 1981 vapor pressure over liquid
             if (liquid_vap_pres .and. tg(i,j) .ge. 273.16 ) then
-                tg1=tg(i,j)-273.16
+                fw = (1.0007+(3.46e-6*pl(i,j,nz+1)/100.))   ! enhancement factor with pressure in mbar
+                tg1=tg(i,j)-273.16  ! temperature in C
                 qgnd(i,j)= (fw*18.0 / (44.0*pl(i,j,nz+1))) * (611.21*exp(17.502*tg1/(240.97+tg1)))
             else
                qgnd(i,j)  = (18.0 / 44.0) * 611.0 * exp(22.5 * (1.0 - (273.16 / tg(i,j)))) / pl(i,j,nz+1)
