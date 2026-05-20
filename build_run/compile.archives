@@ -20,8 +20,9 @@ setenv INTEL_LICENSE_FILE "/nasa/intel/licenses/*.lic"
 ##set the pre-compiler defs for the model.
 ##include -DMARS_GDIAGS for global diagnostics output. compiling will take longer
 ##include RELEASE for release version compile
-##use optim = bridge for Sandy Bridge or Ivy Bridge processors
-##use optim = well for Haswell or Broadwell processors
+##optionally use optimization flags for specific processors
+##use optim = avx for any Electra processors
+##use optim = well for Broadwell processors
 ##use optim = lake for Cascade Lake or Sky Lake processors
 ##use optim = rome for Rome processors
 ##leave optim blank for generic processors
@@ -41,7 +42,7 @@ setenv NC_BLKSZ 64K
 #choose the template file based on optimization flag
 if ( "$optim" =~ *well ) then
 set template = $cwd/../bin/mkmf.template.$platform.avx2
-else if ( "$optim" =~ *bridge ) then
+else if ( "$optim" =~ *avx ) then
 set template = $cwd/../bin/mkmf.template.$platform.avx
 else if ( "$optim" =~ *lake ) then
 set template = $cwd/../bin/mkmf.template.$platform.lake

@@ -22,13 +22,26 @@ export MPI=""
 ##set the pre-compiler defs for the model.
 ##include -DMARS_GDIAGS for global diagnostics output. compiling will take longer
 ##include RELEASE for release version compile
-##use optim = bridge for Sandy Bridge or Ivy Bridge processors
-##use optim = well for Haswell or Broadwell processors
+##optionally use optimization flags for specific processors
+##use optim = avx for any Electra processors
+##use optim = well for Broadwell processors
 ##use optim = lake for Cascade Lake or Sky Lake processors
 ##use optim = rome for Rome processors
 ##leave optim blank for generic processors
 optim=""
 cppDefs="-DMARS_GCM -DMARS_SURFACE -DRELEASE"
+
+#--------------------------------------------------------------------------------------------------------
+#choose the template file based on optimization flag
+if [[ "$optim" == *well ]]; then
+    template="$cwd/../bin/mkmf.template.$platform.avx2"
+elif [[ "$optim" == *avx ]]; then
+    template="$cwd/../bin/mkmf.template.$platform.avx"
+elif [[ "$optim" == *lake ]]; then
+    template="$cwd/../bin/mkmf.template.$platform.lake"
+elif [[ "$optim" == *rome ]]; then
+    template="$cwd"
+fi
 
 #--------------------------------------------------------------------------------------------------------
 execdir="$cwd/exec.$platform.mars3.2"  # where code is compiled and executable is created
@@ -49,7 +62,7 @@ cd "$execdir"
 
 #rjw -----  added new code below and  added $SLIST to the mkmf line.
 
-SLIST=( $sourcedir/atmos_phys/atmos_param/cg_drag/cg_drag.F90 )
+SLIST=( $sourcedir/atmos_phys/atmos_param/cg_drag/cg_drag.F90 $sourcedir/atmos_phys/atmos_param/moist_conv/moist_conv.F90 )
 
 echo '----------------*********--------------' 
 echo ' Additional Source:  '  "$SLIST"
@@ -113,6 +126,8 @@ egrep -v "*cmip*" pathnames.all > path_names
 /bin/mv path_names pathnames.all
 egrep -v "*fv_cmp*" pathnames.all > path_names
 /bin/mv path_names pathnames.all
+egrep -v "*/docs/*" pathnames.all > path_names
+/bin/mv path_names pathnames.all
 egrep -v "atmos_cubed_sphere/driver/GFDL/*"  pathnames.all  > path_names
 /bin/mv path_names pathnames.all
 egrep -v "atmos_cubed_sphere/driver/SHiELD/*"  pathnames.all  > path_names
@@ -146,13 +161,13 @@ pushd atmos_cubed
 
 
 /bin/mv pathnames_atmos_cubed pathnames.all
-egrep -v "atmos_cubed_sphere/driver/GFDL/*"  pathnames.all  > pathnames_atmos_cubed
-/bin/mv pathnames_atmos_cubed pathnames.all
-egrep -v "atmos_cubed_sphere/driver/SHiELD/*"  pathnames.all  > pathnames_atmos_cubed
+egrep -v "atmos_cubed_sphere/driver/*"  pathnames.all  > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
 egrep -v "*cmip*" pathnames.all > pathnames_atmos_cubed
 /bin/mv pathnames_atmos_cubed pathnames.all
 egrep -v "*fv_cmp*" pathnames.all > pathnames_atmos_cubed
+/bin/mv pathnames_atmos_cubed pathnames.all
+egrep -v "*/docs/*" pathnames.all > pathnames_atmos_cubed
 
 ${mkmf} -m Makefile -a "$sourcedir" -p lib_atmos_cubed.a -t "$template" -c "$cppDefs" -o "-I$execdir/fms" "$execdir/atmos_cubed/pathnames_atmos_cubed" "$src_share/include" "$src_share/mpp/include"
 popd
