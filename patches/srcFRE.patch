@@ -31,7 +31,7 @@ index e07ec96..ebc2493 100644
  
  end module plev_constants_mod
 diff --git a/src/plevel/plevel.sh.in b/src/plevel/plevel.sh.in
-index 38bd4fd..f6a3e19 100755
+index 38bd4fd..afd3067 100755
 --- a/src/plevel/plevel.sh.in
 +++ b/src/plevel/plevel.sh.in
 @@ -48,6 +48,7 @@ allow_zero=.false.
@@ -68,6 +68,15 @@ index 38bd4fd..f6a3e19 100755
          h) usage; exit 0;;
          V)
              $pkg_libexec_dir/print_version $script_name
+@@ -193,7 +197,7 @@ i=0
+ for prs in $plevs;
+ do
+     i=$((i+1))
+-    echo "    pout($i) =  $prs.," >> $namelist
++    echo "    pout($i) =  $prs," >> $namelist
+ done
+ 
+ # more namelist values
 @@ -232,6 +236,10 @@ done
  
  echo " /" >> $namelist
@@ -126,7 +135,7 @@ index 51c9ecf..f786ecf 100644
           enddo 
  
 diff --git a/src/plevel/run_pressure_interp.F90 b/src/plevel/run_pressure_interp.F90
-index 881f011..5b90706 100644
+index 881f011..7f90e9a 100644
 --- a/src/plevel/run_pressure_interp.F90
 +++ b/src/plevel/run_pressure_interp.F90
 @@ -130,9 +130,10 @@ program run_pressure_interp
@@ -225,7 +234,7 @@ index 881f011..5b90706 100644
  
 -   if (ndim /= 3) call error_handler ('variable '//trim(ps_name)//&
 -      & ' must have three dimensions: x,y,t')
-+   if (ndim /= 3) then
++   if (ndim > 3) then
 +      istat = NF90_INQ_DIMID (ncid_in,tod_name,todid)
 +      if (istat /= NF90_NOERR) then
 +         tod_name='time_of_day_12'
@@ -236,7 +245,7 @@ index 881f011..5b90706 100644
 +      do_diurn = .true.
 +      print*,'tod_name is ',tod_name, 'dim ids = ',dimids(1:ndim), 'todid = ',todid
 +   else
-+      call error_handler ('variable '//trim(ps_name)//&
++      if (ndim /= 3) call error_handler ('non-diurn variable '//trim(ps_name)//&
 +         & ' must have three dimensions: x,y,t')
 +   endif
  
