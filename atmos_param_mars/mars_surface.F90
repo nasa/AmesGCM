@@ -651,7 +651,7 @@ if( (file_exists( trim( filename ) ))  ) then
     call read_sfc_field( nlon, mlat, lonb, latb, filename, fieldname, npcflag )
 #endif
     if(mcpu0) print *, 'Have read npcflag data file: '
-    if (.not. (file_exists( trim( filename ))) ) then
+    if (.not. (file_exists( trim( f_tile ))) ) then
 !!----reset the surface water ice to follow the npc flag file----!!
         do nt=1,nice_mass
             where (npcflag .gt. 0.5)
