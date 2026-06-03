@@ -8,7 +8,7 @@
 #PBS -q long
 #PBS -j oe
 #PBS -l select=3:ncpus=28:model=bro_ele
-#PBS -l walltime=24:00:00
+#PBS -l walltime=30:00:00
 #PBS -W group_list=s????
 #PBS -M user@email.com
 #PBS -m abe
@@ -30,7 +30,7 @@ set homedir = $cwd
 
 set NCX = 24        # Number of horizontal grid cells per cube face column or row
 set PREF = 5.0e4    # Reference surface pressure (Pa)
-set DTA = 231       # Atmospheric time step
+set DTA = 77       # Atmospheric time step
 set NKS = 1         # Number of vertical remapping per time step
 set NNS = 4         # Number of advective steps per k
 set NPZ = 56        # Number of vertical layers
