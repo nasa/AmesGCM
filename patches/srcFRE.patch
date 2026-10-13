@@ -9,7 +9,7 @@ index e07ec96..ebc2493 100644
  implicit none
  private
  
-+#ifndef MARS
++#ifdef EARTH
  real, public, parameter :: GRAV   = 9.80
  real, public, parameter :: RDGAS  = 287.04
  real, public, parameter :: RVGAS  = 461.50
